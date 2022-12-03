@@ -1,0 +1,50 @@
+{
+    "name": "stefanak-michal/pdo-bolt",
+    "description": "PDO for Bolt protocol",
+    "keywords": ["neo4j", "bolt", "socket", "database", "memgraph", "amazon neptune", "graph database"],
+    "homepage": "https://github.com/stefanak-michal/pdo-bolt",
+    "type": "library",
+    "readme": "README.md",
+    "license": "MIT",
+    "minimum-stability": "stable",
+    "require": {
+        "php": "^8.0",
+        "ext-pdo": "*",
+        "stefanak-michal/bolt": "^6"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9"
+    },
+    "support": {
+        "issues": "https://github.com/stefanak-michal/pdo-bolt/issues",
+        "source": "https://github.com/stefanak-michal/pdo-bolt",
+		"docs": "https://github.com/stefanak-michal/pdo-bolt"
+    },
+    "funding": [
+        {
+            "type": "ko-fi",
+            "url": "https://ko-fi.com/michalstefanak"
+        },
+        {
+            "type": "github",
+            "url": "https://github.com/sponsors/stefanak-michal"
+        }
+    ],
+    "authors": [
+        {
+            "name": "Michal Stefanak",
+            "role": "Developer",
+            "homepage": "https://www.linkedin.com/in/michalstefanak/"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "pdo_bolt\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "pdo_bolt\\tests\\": "tests/"
+        }
+    }
+}

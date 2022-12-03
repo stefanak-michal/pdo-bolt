@@ -1,0 +1,413 @@
+<?php
+
+namespace pdo_bolt\drivers\bolt;
+
+use Bolt\error\BoltException;
+use Bolt\protocol\AProtocol;
+use Bolt\protocol\Response;
+use Iterator;
+use PDO;
+use PDOException;
+use PDOStatement;
+
+/**
+ * Class BoltStatement
+ * @author Michal Stefanak
+ * @link https://github.com/stefanak-michal/pdo-bolt
+ */
+class BoltStatement extends PDOStatement
+{
+    private array $bindedColumns = [];
+    private string $errorCode;
+    private array $failureContent = [];
+    private array $parsedQueryString = [];
+    private int $placeholdersCnt = 0;
+    private array $columns = [];
+    private ?Response $record;
+    private array $fetchMode = [];
+    private array $bindedParameters = [];
+
+    public function __construct(private AProtocol $protocol, string $query, private array $attributes = [])
+    {
+        $this->queryString = $query;
+        $this->parseQueryString();
+    }
+
+    // todo this class should replace placeholders in query only if ATTR_EMULATE_PREPARES is true ..otherwise you send parameters as RUN parameters and replace placeholders with cypher placeholder ($)
+
+    private function parseQueryString()
+    {
+        //todo it doesn't work with both type of placeholders at once ..do it separately
+        preg_match_all('/:[a-zA-Z0-9_]+|\?{1,2}/', $this->queryString, $matches, PREG_OFFSET_CAPTURE);
+        $this->placeholdersCnt = count($matches[0]);
+        $withoutParams = preg_split('/:[a-zA-Z0-9_]+|\?{1,2}/', $this->queryString);
+
+        $parts = [];
+        $index = 1;
+        foreach ($withoutParams as $i => $str) {
+            $param = $matches[0][$i][0] ?? '';
+            if ($param === '??') {
+                $str .= '?';
+            }
+            if (strlen($str) > 0) {
+                $parts[] = $str;
+            }
+            if ($param === '?') {
+                $parts[] = ['placeholder' => $index];
+                $index++;
+            } elseif (str_starts_with($param, ':')) {
+                $parts[] = ['placeholder' => $param];
+            }
+        }
+
+        $this->parsedQueryString = $parts;
+    }
+
+    public function bindColumn(
+        string|int $column,
+        mixed      &$var,
+        int        $type = PDO::PARAM_STR,
+        ?int       $maxLength = 0,
+        mixed      $driverOptions = null
+    ): bool
+    {
+        //todo not tested
+        $this->bindedColumns[$column] = [
+            'var' => &$var,
+            'type' => $type,
+            'maxLength' => $maxLength,
+            'driverOptions' => $driverOptions
+        ];
+        return true;
+    }
+
+    public function bindParam(
+        int|string $param,
+        mixed      &$var,
+        int        $type = PDO::PARAM_STR,
+        int        $maxLength = null,
+        mixed      $driverOptions = null
+    ): bool
+    {
+        $this->bindedParameters[$param] = [
+            'var' => &$var,
+            'type' => $type,
+            'maxLength' => $maxLength,
+            'driverOptions' => $driverOptions
+        ];
+        return true;
+    }
+
+    public function bindValue(string|int $param, mixed $value, int $type = PDO::PARAM_STR): bool
+    {
+        if (is_string($param) && $param[0] !== ':') {
+            $param = ':' . $param;
+        }
+
+        $this->bindedParameters[$param] = [
+            'var' => $value,
+            'type' => $type
+        ];
+        return true;
+    }
+
+    public function closeCursor(): bool
+    {
+        /** @var Response $response */
+        $response = $this->protocol->discard()->getResponse();
+        //todo handle error
+
+        return true;
+    }
+
+    public function columnCount(): int
+    {
+        return count($this->columns);
+    }
+
+    public function rowCount(): int
+    {
+        //todo can i get this info somewhere?
+        return -1;
+    }
+
+    public function debugDumpParams(): ?bool
+    {
+        //todo
+        return null;
+    }
+
+    public function execute(?array $params = null): bool
+    {
+        if (is_array($params)) {
+            $this->bindedParameters = [];
+            foreach ($params as $key => $value) {
+                $this->bindValue($key, $value);
+            }
+        }
+        if (count($this->bindedParameters) !== $this->placeholdersCnt) {
+            //todo error
+            return false;
+        }
+
+        $parameters = [];
+        foreach ($this->parsedQueryString as $i => &$part) {
+            if (is_array($part)) {
+                if (array_key_exists($part['placeholder'], $this->bindedParameters)) {
+                    $parameters['a' . $i] = $this->sanitizeParameter(
+                        $this->bindedParameters[$part['placeholder']]['var'],
+                        $this->bindedParameters[$part['placeholder']]['type']
+                    );
+                    $part = '$a' . $i;
+                } else {
+                    //todo error
+                    return false;
+                }
+            }
+        }
+
+        try {
+            /** @var Response $response */
+            $response = $this->protocol
+                ->run(implode('', $this->parsedQueryString), $parameters)
+                ->getResponse();
+
+            //todo check runResponse and handle error
+
+            $this->columns = $response->getContent()['fields'] ?? [];
+            return true;
+        } catch (BoltException) {
+            //todo handle error
+            return false;
+        }
+    }
+
+    private function sanitizeParameter(mixed $value, int $type): mixed
+    {
+        // todo add specific bolt params
+        switch ($type) {
+            case PDO::PARAM_NULL:
+                return null;
+            case PDO::PARAM_INT:
+                return intval($value);
+            case PDO::PARAM_STR:
+            case PDO::PARAM_STR_CHAR:
+            case PDO::PARAM_STR_NATL:
+            case PDO::PARAM_LOB: // todo https://www.php.net/manual/en/pdo.lobs.php
+                return addslashes(sprintf('%s', $value));
+            case PDO::PARAM_BOOL:
+                return boolval($value);
+
+            case \pdo_bolt\PDO::BOLT_PARAM_FLOAT:
+                return floatval($value);
+            case \pdo_bolt\PDO::BOLT_PARAM_LIST:
+                if (is_array($value) || $value instanceof \Bolt\packstream\IPackListGenerator) {
+                    return $value;
+                }
+                //todo error
+                break;
+            case \pdo_bolt\PDO::BOLT_PARAM_DICTIONARY:
+                if (gettype($value) === 'object') {
+                    return $value;
+                } elseif (is_array($value)) {
+                    return (object)$value;
+                }
+                //todo error
+                break;
+            case \pdo_bolt\PDO::BOLT_PARAM_STRUCTURE:
+                if ($value instanceof \Bolt\protocol\IStructure) {
+                    return $value;
+                }
+                //todo error
+                break;
+            case \pdo_bolt\PDO::BOLT_PARAM_BYTES:
+                if ($value instanceof \Bolt\packstream\Bytes) {
+                    return $value;
+                }
+                //todo error
+                break;
+            default:
+                //todo error
+                break;
+        }
+        return $value;
+    }
+
+    public function fetch(int $mode = PDO::FETCH_BOTH, int $cursorOrientation = PDO::FETCH_ORI_NEXT, int $cursorOffset = 0): mixed
+    {
+        //todo
+        if (!$this->nextRowset()) {
+            return false;
+        }
+
+        switch ($mode) {
+            case PDO::FETCH_ASSOC:
+                return array_combine($this->columns, $this->record->getContent());
+            case PDO::FETCH_BOTH:
+                return $this->record->getContent() + array_combine($this->columns, $this->record->getContent());
+            case PDO::FETCH_BOUND:
+                //todo insert into binded columns
+                return true;
+            case PDO::FETCH_CLASS:
+                break;
+            case PDO::FETCH_INTO:
+                break;
+            case PDO::FETCH_LAZY:
+                break;
+            case PDO::FETCH_NAMED:
+                break;
+            case PDO::FETCH_NUM:
+                return $this->record->getContent();
+            case PDO::FETCH_OBJ:
+                return (object)array_combine($this->columns, $this->record->getContent());
+            case PDO::FETCH_PROPS_LATE:
+                break;
+
+        }
+
+        return false;
+    }
+
+    public function fetchAll(int $mode = PDO::FETCH_BOTH, mixed ...$args): array
+    {
+        $output = [];
+        while ($this->nextRowset()) {
+            // todo
+            $output[] = $this->record->getContent();
+        }
+        return $output;
+    }
+
+    public function fetchColumn(int $column = 0): mixed
+    {
+        if ($this->nextRowset()) {
+            return $this->record->getContent()[$column];
+        }
+        return false;
+    }
+
+    #[\ReturnTypeWillChange]
+    public function fetchObject(?string $class = "stdClass", array $constructorArgs = []): object|bool
+    {
+        if ($this->nextRowset()) {
+            try {
+                $ref = new \ReflectionClass($class);
+                $instance = $ref->newInstanceWithoutConstructor();
+
+                $arr = array_combine($this->columns, $this->record->getContent());
+                foreach ($ref->getProperties() as $property) {
+                    $property->setValue($instance, $arr[$property->getName()]);
+                }
+
+                $constructor = $ref->getConstructor();
+                if ($constructor instanceof \ReflectionMethod) {
+                    $constructor->invokeArgs($instance, $constructorArgs);
+                }
+
+                return $instance;
+            } catch (\ReflectionException $e) {
+                //todo error
+                return false;
+            }
+        }
+        return false;
+    }
+
+    public function setAttribute(int $attribute, mixed $value): bool
+    {
+        if (!array_key_exists($attribute, $this->attributes)) {
+            $this->handleError(BoltDriver::ERR_ATTRIBUTE_NOT_SUPPORTED);
+            return false;
+        }
+
+        $this->attributes[$attribute] = $value;
+        return true;
+    }
+
+    public function getAttribute(int $name): mixed
+    {
+        return $this->attributes[$name] ?? null;
+    }
+
+    #[\ReturnTypeWillChange]
+    public function getColumnMeta(int $column): array|bool
+    {
+        if (array_key_exists($column, $this->columns)) {
+            return [
+                'native_type' => '',
+                'flags' => [],
+                'name' => $this->columns[$column],
+                'len' => -1,
+                'precision' => 0,
+                'pdo_type' => -1
+            ];
+        }
+        return false;
+    }
+
+    public function setFetchMode($mode, $className = null, ...$params): bool
+    {
+        //todo check if $mode is supported
+        $this->fetchMode = [$mode, $className, $params];
+        return true;
+    }
+
+    private bool $hasMore = true;
+
+    public function nextRowset(): bool
+    {
+        $this->record = null;
+
+        if (!$this->hasMore) {
+            return false;
+        }
+
+        $this->protocol->pull(['n' => 1]); //todo add qid
+        /** @var Response $response */
+        foreach ($this->protocol->getResponses() as $response) {
+            if ($response->getSignature() === $response::SIGNATURE_RECORD) {
+                $this->record = $response;
+            } elseif ($response->getSignature() === $response::SIGNATURE_SUCCESS) {
+                $this->hasMore = $response->getContent()['has_more'] ?? false;
+            }
+            //todo error
+        }
+
+        return !is_null($this->record);
+    }
+
+    public function getIterator(): Iterator
+    {
+        return $this->protocol->getResponses();
+    }
+
+    private function handleError(string $errorCode = PDO::ERR_NONE, array $failureContent = []): void
+    {
+        $this->errorCode = $errorCode;
+        $this->failureContent = $failureContent;
+
+        if (!str_starts_with($errorCode, '00')) {
+            $errorMode = $this->getAttribute(PDO::ATTR_ERRMODE);
+
+            if ($errorMode === PDO::ERRMODE_EXCEPTION) {
+                throw new PDOException('CQLSTATE[' . $errorCode . '] ' . ($failureContent['message'] ?? ''));
+            } elseif ($errorMode === PDO::ERRMODE_WARNING) {
+                trigger_error('CQLSTATE[' . $errorCode . '] ' . ($failureContent['message'] ?? ''), E_WARNING);
+            }
+        }
+    }
+
+    public function errorCode(): ?string
+    {
+        return $this->errorCode;
+    }
+
+    public function errorInfo(): array
+    {
+        return [
+            $this->errorCode,
+            $this->failureContent['code'] ?? '',
+            $this->failureContent['message'] ?? ''
+        ];
+    }
+}
