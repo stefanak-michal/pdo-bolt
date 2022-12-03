@@ -17,15 +17,16 @@ use PDOStatement;
  */
 class BoltStatement extends PDOStatement
 {
-    private array $bindedColumns = [];
-    private string $errorCode;
-    private array $failureContent = [];
+    private array $boundColumns = [];
     private array $parsedQueryString = [];
     private int $placeholdersCnt = 0;
     private array $columns = [];
     private ?Response $record;
     private array $fetchMode = [];
-    private array $bindedParameters = [];
+    private array $boundParameters = [];
+    private bool $hasMore = true;
+
+    use ErrorTrait;
 
     public function __construct(private AProtocol $protocol, string $query, private array $attributes = [])
     {
@@ -34,6 +35,7 @@ class BoltStatement extends PDOStatement
     }
 
     // todo this class should replace placeholders in query only if ATTR_EMULATE_PREPARES is true ..otherwise you send parameters as RUN parameters and replace placeholders with cypher placeholder ($)
+    // todo bookmarks
 
     private function parseQueryString()
     {
@@ -72,7 +74,7 @@ class BoltStatement extends PDOStatement
     ): bool
     {
         //todo not tested
-        $this->bindedColumns[$column] = [
+        $this->boundColumns[$column] = [
             'var' => &$var,
             'type' => $type,
             'maxLength' => $maxLength,
@@ -89,7 +91,7 @@ class BoltStatement extends PDOStatement
         mixed      $driverOptions = null
     ): bool
     {
-        $this->bindedParameters[$param] = [
+        $this->boundParameters[$param] = [
             'var' => &$var,
             'type' => $type,
             'maxLength' => $maxLength,
@@ -104,7 +106,7 @@ class BoltStatement extends PDOStatement
             $param = ':' . $param;
         }
 
-        $this->bindedParameters[$param] = [
+        $this->boundParameters[$param] = [
             'var' => $value,
             'type' => $type
         ];
@@ -113,11 +115,13 @@ class BoltStatement extends PDOStatement
 
     public function closeCursor(): bool
     {
-        /** @var Response $response */
-        $response = $this->protocol->discard()->getResponse();
-        //todo handle error
-
-        return true;
+        try {
+            /** @var Response $response */
+            $response = $this->protocol->discard()->getResponse();
+            return $this->checkResponse($response);
+        } catch (BoltException $e) {
+            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
+        }
     }
 
     public function columnCount(): int
@@ -140,27 +144,27 @@ class BoltStatement extends PDOStatement
     public function execute(?array $params = null): bool
     {
         if (is_array($params)) {
-            $this->bindedParameters = [];
+            $this->boundParameters = [];
             foreach ($params as $key => $value) {
                 $this->bindValue($key, $value);
             }
         }
-        if (count($this->bindedParameters) !== $this->placeholdersCnt) {
-            //todo error
+        if (count($this->boundParameters) !== $this->placeholdersCnt) {
+            $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Amount of bound parameters is not equal amount of placeholders in query.']);
             return false;
         }
 
         $parameters = [];
         foreach ($this->parsedQueryString as $i => &$part) {
             if (is_array($part)) {
-                if (array_key_exists($part['placeholder'], $this->bindedParameters)) {
+                if (array_key_exists($part['placeholder'], $this->boundParameters)) {
                     $parameters['a' . $i] = $this->sanitizeParameter(
-                        $this->bindedParameters[$part['placeholder']]['var'],
-                        $this->bindedParameters[$part['placeholder']]['type']
+                        $this->boundParameters[$part['placeholder']]['var'],
+                        $this->boundParameters[$part['placeholder']]['type']
                     );
                     $part = '$a' . $i;
                 } else {
-                    //todo error
+                    $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Placeholder from query is not defined in bound parameters.']);
                     return false;
                 }
             }
@@ -172,20 +176,21 @@ class BoltStatement extends PDOStatement
                 ->run(implode('', $this->parsedQueryString), $parameters)
                 ->getResponse();
 
-            //todo check runResponse and handle error
-
-            $this->columns = $response->getContent()['fields'] ?? [];
-            return true;
-        } catch (BoltException) {
-            //todo handle error
-            return false;
+            if ($this->checkResponse($response)) {
+                $this->columns = $response->getContent()['fields'] ?? [];
+                return true;
+            }
+        } catch (BoltException $e) {
+            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
         }
+
+        return false;
     }
 
     private function sanitizeParameter(mixed $value, int $type): mixed
     {
-        // todo add specific bolt params
         switch ($type) {
+            //default types
             case PDO::PARAM_NULL:
                 return null;
             case PDO::PARAM_INT:
@@ -198,13 +203,14 @@ class BoltStatement extends PDOStatement
             case PDO::PARAM_BOOL:
                 return boolval($value);
 
+            //Bolt types
             case \pdo_bolt\PDO::BOLT_PARAM_FLOAT:
                 return floatval($value);
             case \pdo_bolt\PDO::BOLT_PARAM_LIST:
                 if (is_array($value) || $value instanceof \Bolt\packstream\IPackListGenerator) {
                     return $value;
                 }
-                //todo error
+                $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Bolt list parameter has to be array or IPackListGenerator instance.', 'code' => $type]);
                 break;
             case \pdo_bolt\PDO::BOLT_PARAM_DICTIONARY:
                 if (gettype($value) === 'object') {
@@ -212,25 +218,24 @@ class BoltStatement extends PDOStatement
                 } elseif (is_array($value)) {
                     return (object)$value;
                 }
-                //todo error
+                $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Bolt dictionary parameter has to be object, array or IPackDictionaryGenerator instance.', 'code' => $type]);
                 break;
             case \pdo_bolt\PDO::BOLT_PARAM_STRUCTURE:
                 if ($value instanceof \Bolt\protocol\IStructure) {
                     return $value;
                 }
-                //todo error
+                $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Bolt structure parameter has to be IStructure instance.', 'code' => $type]);
                 break;
             case \pdo_bolt\PDO::BOLT_PARAM_BYTES:
                 if ($value instanceof \Bolt\packstream\Bytes) {
                     return $value;
                 }
-                //todo error
-                break;
-            default:
-                //todo error
+                $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Bolt bytes parameter has to be Bytes instance.', 'code' => $type]);
                 break;
         }
-        return $value;
+
+        $this->handleError(BoltDriver::ERR_PARAMETER_TYPE_NOT_SUPPORTED);
+        return false;
     }
 
     public function fetch(int $mode = PDO::FETCH_BOTH, int $cursorOrientation = PDO::FETCH_ORI_NEXT, int $cursorOffset = 0): mixed
@@ -306,8 +311,7 @@ class BoltStatement extends PDOStatement
 
                 return $instance;
             } catch (\ReflectionException $e) {
-                //todo error
-                return false;
+                throw new PDOException('Underlying Bolt library error occurred', previous: $e);
             }
         }
         return false;
@@ -352,8 +356,6 @@ class BoltStatement extends PDOStatement
         return true;
     }
 
-    private bool $hasMore = true;
-
     public function nextRowset(): bool
     {
         $this->record = null;
@@ -362,15 +364,18 @@ class BoltStatement extends PDOStatement
             return false;
         }
 
-        $this->protocol->pull(['n' => 1]); //todo add qid
-        /** @var Response $response */
-        foreach ($this->protocol->getResponses() as $response) {
-            if ($response->getSignature() === $response::SIGNATURE_RECORD) {
-                $this->record = $response;
-            } elseif ($response->getSignature() === $response::SIGNATURE_SUCCESS) {
-                $this->hasMore = $response->getContent()['has_more'] ?? false;
+        try {
+            $this->protocol->pull(['n' => 1]); //todo add qid
+            /** @var Response $response */
+            foreach ($this->protocol->getResponses() as $response) {
+                if ($response->getSignature() === $response::SIGNATURE_RECORD) {
+                    $this->record = $response;
+                } elseif ($this->checkResponse($response)) {
+                    $this->hasMore = $response->getContent()['has_more'] ?? false;
+                }
             }
-            //todo error
+        } catch (BoltException $e) {
+            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
         }
 
         return !is_null($this->record);
@@ -379,35 +384,5 @@ class BoltStatement extends PDOStatement
     public function getIterator(): Iterator
     {
         return $this->protocol->getResponses();
-    }
-
-    private function handleError(string $errorCode = PDO::ERR_NONE, array $failureContent = []): void
-    {
-        $this->errorCode = $errorCode;
-        $this->failureContent = $failureContent;
-
-        if (!str_starts_with($errorCode, '00')) {
-            $errorMode = $this->getAttribute(PDO::ATTR_ERRMODE);
-
-            if ($errorMode === PDO::ERRMODE_EXCEPTION) {
-                throw new PDOException('CQLSTATE[' . $errorCode . '] ' . ($failureContent['message'] ?? ''));
-            } elseif ($errorMode === PDO::ERRMODE_WARNING) {
-                trigger_error('CQLSTATE[' . $errorCode . '] ' . ($failureContent['message'] ?? ''), E_WARNING);
-            }
-        }
-    }
-
-    public function errorCode(): ?string
-    {
-        return $this->errorCode;
-    }
-
-    public function errorInfo(): array
-    {
-        return [
-            $this->errorCode,
-            $this->failureContent['code'] ?? '',
-            $this->failureContent['message'] ?? ''
-        ];
     }
 }

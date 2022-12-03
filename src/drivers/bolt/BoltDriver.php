@@ -25,7 +25,6 @@ class BoltDriver implements IDriver
     public const ERR_AUTH = '01000';
     public const ERR_AUTH_LOGIN = '01001';
     public const ERR_AUTH_TYPE = '01002';
-    public const ERR_AUTH_METHOD = '01003';
     public const ERR_MESSAGE = '02000';
     public const ERR_MESSAGE_FAILURE = '02001';
     public const ERR_MESSAGE_IGNORED = '02002';
@@ -33,6 +32,8 @@ class BoltDriver implements IDriver
     public const ERR_TRANSACTION_NOT_SUPPORTED = '03001';
     public const ERR_ATTRIBUTE = '04000';
     public const ERR_ATTRIBUTE_NOT_SUPPORTED = '04001';
+    public const ERR_PARAMETER = '05000';
+    public const ERR_PARAMETER_TYPE_NOT_SUPPORTED = '05001';
 
     private AProtocol $protocol;
     private IConnection $connection;
@@ -50,6 +51,8 @@ class BoltDriver implements IDriver
         PDO::ATTR_SERVER_INFO => null,
         //todo add more needed to make them available
     ];
+
+    use ErrorTrait;
 
     public function __construct(string $dsn, ?string $username = null, ?string $password = null, ?array $options = null)
     {
@@ -75,7 +78,7 @@ class BoltDriver implements IDriver
         } elseif (isset($options['auth']) && method_exists(Auth::class, $options['auth'])) {
             $auth = Auth::{$options['auth']}($username);
         } else {
-            $this->handleError(self::ERR_AUTH_TYPE, errorMode: PDO::ERRMODE_EXCEPTION);
+            $this->handleError(self::ERR_AUTH_TYPE, ['message' => 'Authentication type not resolved by username, password and DSN auth.'], PDO::ERRMODE_EXCEPTION);
             return;
         }
 
@@ -108,7 +111,7 @@ class BoltDriver implements IDriver
                 unset($auth['user_agent']);
                 $response = $this->protocol->init($userAgent, $auth);
             } else {
-                $this->handleError(self::ERR_AUTH_METHOD, errorMode: PDO::ERRMODE_EXCEPTION);
+                $this->handleError(self::ERR_AUTH, ['message' => 'Low level bolt library is missing init/hello message.'], PDO::ERRMODE_EXCEPTION);
                 return;
             }
 
@@ -136,20 +139,12 @@ class BoltDriver implements IDriver
                 $this->handleError(self::ERR_TRANSACTION_NOT_SUPPORTED);
                 return false;
             }
-
-            switch ($response->getSignature()) {
-                case $response::SIGNATURE_SUCCESS:
-                    $this->inTransaction = true;
-                    return true;
-                case $response::SIGNATURE_FAILURE:
-                    $this->handleError(self::ERR_MESSAGE_FAILURE, $response->getContent());
-                    break;
-                case $response::SIGNATURE_IGNORED:
-                    $this->handleError(self::ERR_MESSAGE_IGNORED);
-                    break;
+            if ($this->checkResponse($response)) {
+                $this->inTransaction = true;
+                return true;
             }
         } catch (BoltException $e) {
-            throw new PDOException($e->getMessage());
+            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
         }
 
         return false;
@@ -164,20 +159,12 @@ class BoltDriver implements IDriver
                 $this->handleError(self::ERR_TRANSACTION_NOT_SUPPORTED);
                 return false;
             }
-
-            switch ($response->getSignature()) {
-                case $response::SIGNATURE_SUCCESS:
-                    $this->inTransaction = false;
-                    return true;
-                case $response::SIGNATURE_FAILURE:
-                    $this->handleError(self::ERR_MESSAGE_FAILURE, $response->getContent());
-                    break;
-                case $response::SIGNATURE_IGNORED:
-                    $this->handleError(self::ERR_MESSAGE_IGNORED);
-                    break;
+            if ($this->checkResponse($response)) {
+                $this->inTransaction = false;
+                return true;
             }
         } catch (BoltException $e) {
-            throw new PDOException($e->getMessage());
+            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
         }
 
         return false;
@@ -192,20 +179,12 @@ class BoltDriver implements IDriver
                 $this->handleError(self::ERR_TRANSACTION_NOT_SUPPORTED);
                 return false;
             }
-
-            switch ($response->getSignature()) {
-                case $response::SIGNATURE_SUCCESS:
-                    $this->inTransaction = false;
-                    return true;
-                case $response::SIGNATURE_FAILURE:
-                    $this->handleError(self::ERR_MESSAGE_FAILURE, $response->getContent());
-                    break;
-                case $response::SIGNATURE_IGNORED:
-                    $this->handleError(self::ERR_MESSAGE_IGNORED);
-                    break;
+            if ($this->checkResponse($response)) {
+                $this->inTransaction = false;
+                return true;
             }
         } catch (BoltException $e) {
-            throw new PDOException($e->getMessage());
+            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
         }
 
         return false;
@@ -218,13 +197,13 @@ class BoltDriver implements IDriver
 
     public function lastInsertId(?string $name = null): bool
     {
-        // Database does not support last inserted id
-        $this->handleError('IM001');
+        $this->handleError('IM001', ['message' => 'Database does not support last inserted id']);
         return false;
     }
 
     public function quote(string $string, int $type = PDO::PARAM_STR): string|bool
     {
+        //todo other types ?
         if ($type === PDO::PARAM_STR) {
             return "'" . $string . "'";
         } else {
@@ -244,8 +223,7 @@ class BoltDriver implements IDriver
             ->run($statement)
             ->getResponse();
 
-        if ($runResponse->getSignature() !== $runResponse::SIGNATURE_SUCCESS) {
-            //todo $this->handleError(0);
+        if (!$this->checkResponse($runResponse)) {
             return false;
         }
 
@@ -256,7 +234,7 @@ class BoltDriver implements IDriver
         $output = false;
         /** @var Response $response */
         foreach ($iterator as $response) {
-            if ($response->getMessage() === $response::MESSAGE_DISCARD && $response->getSignature() === $response::SIGNATURE_SUCCESS) {
+            if ($this->checkResponse($response) && $response->getMessage() === $response::MESSAGE_DISCARD) {
                 $output = ($response->getContent()['stats']['nodes-created'] ?? 0)
                     + ($response->getContent()['stats']['nodes-deleted'] ?? 0)
                     + ($response->getContent()['stats']['relationships-created'] ?? 0)
@@ -296,37 +274,5 @@ class BoltDriver implements IDriver
         }
 
         return true;
-    }
-
-    private function handleError(string $errorCode = PDO::ERR_NONE, array $failureContent = [], ?int $errorMode = null): void
-    {
-        $this->errorCode = $errorCode;
-        $this->failureContent = $failureContent;
-
-        if (!str_starts_with($errorCode, '00')) {
-            if (is_null($errorMode)) {
-                $errorMode = $this->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-            }
-
-            if ($errorMode === PDO::ERRMODE_EXCEPTION) {
-                throw new PDOException('CQLSTATE[' . $errorCode . '] ' . ($failureContent['message'] ?? ''));
-            } elseif ($errorMode === PDO::ERRMODE_WARNING) {
-                trigger_error('CQLSTATE[' . $errorCode . '] ' . ($failureContent['message'] ?? ''), E_WARNING);
-            }
-        }
-    }
-
-    public function errorCode(): ?string
-    {
-        return $this->errorCode;
-    }
-
-    public function errorInfo(): array
-    {
-        return [
-            $this->errorCode,
-            $this->failureContent['code'] ?? '',
-            $this->failureContent['message'] ?? ''
-        ];
     }
 }
