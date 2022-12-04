@@ -5,6 +5,7 @@ namespace pdo_bolt\drivers\bolt;
 use Bolt\protocol\Response;
 use PDO;
 use PDOException;
+use Throwable;
 
 /**
  * @author Michal Stefanak
@@ -44,22 +45,22 @@ trait ErrorTrait
         return false;
     }
 
-    private function handleError(string $errorCode = PDO::ERR_NONE, array $failureContent = [], ?int $errorMode = null): void
+    private function handleError(string $errorCode = PDO::ERR_NONE, array|string $failureContent = [], ?Throwable $previous = null, ?int $errorMode = null): void
     {
         $this->errorCode = $errorCode;
-        $this->failureContent = $failureContent;
+        $this->failureContent = is_string($failureContent) ? ['message' => $failureContent] : $failureContent;
 
         if (!str_starts_with($errorCode, '00')) {
             if (is_null($errorMode)) {
-                $errorMode = $this->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+                $errorMode = $this->getAttribute(PDO::ATTR_ERRMODE);
             }
 
-            $message= 'CQLSTATE[' . $errorCode . '] ' . ($failureContent['message'] ?? '');
-            if (!empty($failureContent['code'])) {
-                $message .= ' (' . $failureContent['code'] . ')';
+            $message= 'CQLSTATE[' . $errorCode . '] ' . ($this->failureContent['message'] ?? '');
+            if (!empty($this->failureContent['code'])) {
+                $message .= ' (' . $this->failureContent['code'] . ')';
             }
             if ($errorMode === PDO::ERRMODE_EXCEPTION) {
-                throw new PDOException($message);
+                throw new PDOException($message, previous: $previous);
             } elseif ($errorMode === PDO::ERRMODE_WARNING) {
                 trigger_error($message, E_WARNING);
             }

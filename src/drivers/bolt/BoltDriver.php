@@ -11,7 +11,6 @@ use Bolt\protocol\AProtocol;
 use Bolt\protocol\Response;
 use pdo_bolt\drivers\IDriver;
 use PDO;
-use PDOException;
 
 /**
  * Class BoltDriver
@@ -34,6 +33,8 @@ class BoltDriver implements IDriver
     public const ERR_ATTRIBUTE_NOT_SUPPORTED = '04001';
     public const ERR_PARAMETER = '05000';
     public const ERR_PARAMETER_TYPE_NOT_SUPPORTED = '05001';
+    public const ERR_PARAMETER_PLACEHOLDER_MISMATCH = '05002';
+    public const ERR_BOLT = '06000';
 
     private AProtocol $protocol;
     private IConnection $connection;
@@ -78,7 +79,7 @@ class BoltDriver implements IDriver
         } elseif (isset($options['auth']) && method_exists(Auth::class, $options['auth'])) {
             $auth = Auth::{$options['auth']}($username);
         } else {
-            $this->handleError(self::ERR_AUTH_TYPE, ['message' => 'Authentication type not resolved by username, password and DSN auth.'], PDO::ERRMODE_EXCEPTION);
+            $this->handleError(self::ERR_AUTH_TYPE, 'Authentication type not resolved by username, password and DSN auth.', errorMode: PDO::ERRMODE_EXCEPTION);
             return;
         }
 
@@ -111,12 +112,12 @@ class BoltDriver implements IDriver
                 unset($auth['user_agent']);
                 $response = $this->protocol->init($userAgent, $auth);
             } else {
-                $this->handleError(self::ERR_AUTH, ['message' => 'Low level bolt library is missing init/hello message.'], PDO::ERRMODE_EXCEPTION);
+                $this->handleError(self::ERR_AUTH, ['message' => 'Low level bolt library is missing init/hello message.'], errorMode: PDO::ERRMODE_EXCEPTION);
                 return;
             }
 
             if ($response->getSignature() === $response::SIGNATURE_FAILURE) {
-                $this->handleError(self::ERR_AUTH_LOGIN, $response->getContent(), PDO::ERRMODE_EXCEPTION);
+                $this->handleError(self::ERR_AUTH_LOGIN, $response->getContent(), errorMode: PDO::ERRMODE_EXCEPTION);
             }
 
             $this->attributes[PDO::ATTR_SERVER_INFO] = $response->getContent()['server'];
@@ -126,7 +127,7 @@ class BoltDriver implements IDriver
                 $this->dbname = $dsnArray['dbname'];
             }
         } catch (BoltException $e) {
-            $this->handleError(self::ERR_AUTH, ['code' => '', 'message' => $e->getMessage()], PDO::ERRMODE_EXCEPTION);
+            $this->handleError(self::ERR_AUTH, $e->getMessage(), errorMode: PDO::ERRMODE_EXCEPTION);
         }
     }
 
@@ -144,7 +145,7 @@ class BoltDriver implements IDriver
                 return true;
             }
         } catch (BoltException $e) {
-            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
+            $this->handleError(self::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
 
         return false;
@@ -164,7 +165,7 @@ class BoltDriver implements IDriver
                 return true;
             }
         } catch (BoltException $e) {
-            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
+            $this->handleError(self::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
 
         return false;
@@ -184,7 +185,7 @@ class BoltDriver implements IDriver
                 return true;
             }
         } catch (BoltException $e) {
-            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
+            $this->handleError(self::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
 
         return false;
@@ -197,7 +198,7 @@ class BoltDriver implements IDriver
 
     public function lastInsertId(?string $name = null): bool
     {
-        $this->handleError('IM001', ['message' => 'Database does not support last inserted id']);
+        $this->handleError('IM001', 'Database does not support last inserted id');
         return false;
     }
 
@@ -213,23 +214,40 @@ class BoltDriver implements IDriver
 
     public function prepare(string $query, array $options = []): BoltStatement
     {
-        return new BoltStatement($this->protocol, $query, array_merge($this->attributes, $options));
+        return new BoltStatement($this->protocol, $query, $options + $this->attributes);
     }
 
     public function exec(string $statement): int|bool
     {
-        /** @var Response $runResponse */
-        $runResponse = $this->protocol
-            ->run($statement)
-            ->getResponse();
+        try {
+            if (method_exists($this->protocol, 'run')) {
+                /** @var Response $runResponse */
+                $runResponse = $this->protocol
+                    ->run($statement)
+                    ->getResponse();
 
-        if (!$this->checkResponse($runResponse)) {
+                if (!$this->checkResponse($runResponse)) {
+                    return false;
+                }
+            } else {
+                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing RUN message.');
+                return false;
+            }
+
+            if (method_exists($this->protocol, 'discard')) {
+                $this->protocol->discard(['qid' => $runResponse->getContent()['qid'] ?? -1]);
+            } elseif (method_exists($this->protocol, 'discardAll')) {
+                $this->protocol->discardAll();
+            } else {
+                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing DISCARD message.');
+                return false;
+            }
+
+            $iterator = $this->protocol->getResponses();
+        } catch (BoltException $e) {
+            $this->handleError(self::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
             return false;
         }
-
-        $iterator = $this->protocol
-            ->discard(['qid' => $runResponse->getContent()['qid'] ?? -1])
-            ->getResponses();
 
         $output = false;
         /** @var Response $response */

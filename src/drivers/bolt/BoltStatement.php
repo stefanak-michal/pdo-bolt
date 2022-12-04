@@ -7,7 +7,6 @@ use Bolt\protocol\AProtocol;
 use Bolt\protocol\Response;
 use Iterator;
 use PDO;
-use PDOException;
 use PDOStatement;
 
 /**
@@ -37,12 +36,21 @@ class BoltStatement extends PDOStatement
     // todo this class should replace placeholders in query only if ATTR_EMULATE_PREPARES is true ..otherwise you send parameters as RUN parameters and replace placeholders with cypher placeholder ($)
     // todo bookmarks
 
-    private function parseQueryString()
+    private function parseQueryString(): void
     {
-        //todo it doesn't work with both type of placeholders at once ..do it separately
-        preg_match_all('/:[a-zA-Z0-9_]+|\?{1,2}/', $this->queryString, $matches, PREG_OFFSET_CAPTURE);
+        preg_match_all('/\$[a-z][a-z0-9]*|\?{1,2}/i', $this->queryString, $matches, PREG_OFFSET_CAPTURE);
         $this->placeholdersCnt = count($matches[0]);
-        $withoutParams = preg_split('/:[a-zA-Z0-9_]+|\?{1,2}/', $this->queryString);
+        if ($this->placeholdersCnt) {
+            $n = array_count_values(array_map(function (string $item) {
+                return $item[0];
+            }, array_column($matches[0], 0)));
+            if (count($n) > 1) {
+                $this->handleError(BoltDriver::ERR_PARAMETER_PLACEHOLDER_MISMATCH, 'Different placeholders in query at once is not supported.');
+                return;
+            }
+        }
+
+        $withoutParams = preg_split('/\$[a-z][a-z0-9]*|\?{1,2}/i', $this->queryString);
 
         $parts = [];
         $index = 1;
@@ -57,8 +65,8 @@ class BoltStatement extends PDOStatement
             if ($param === '?') {
                 $parts[] = ['placeholder' => $index];
                 $index++;
-            } elseif (str_starts_with($param, ':')) {
-                $parts[] = ['placeholder' => $param];
+            } elseif (str_starts_with($param, '$')) {
+                $parts[] = ['placeholder' => ltrim($param, '$')];
             }
         }
 
@@ -91,6 +99,9 @@ class BoltStatement extends PDOStatement
         mixed      $driverOptions = null
     ): bool
     {
+        if (is_string($param)) {
+            $param = ltrim($param, '$');
+        }
         $this->boundParameters[$param] = [
             'var' => &$var,
             'type' => $type,
@@ -102,10 +113,9 @@ class BoltStatement extends PDOStatement
 
     public function bindValue(string|int $param, mixed $value, int $type = PDO::PARAM_STR): bool
     {
-        if (is_string($param) && $param[0] !== ':') {
-            $param = ':' . $param;
+        if (is_string($param)) {
+            $param = ltrim($param, '$');
         }
-
         $this->boundParameters[$param] = [
             'var' => $value,
             'type' => $type
@@ -117,10 +127,18 @@ class BoltStatement extends PDOStatement
     {
         try {
             /** @var Response $response */
-            $response = $this->protocol->discard()->getResponse();
+            if (method_exists($this->protocol, 'discard')) {
+                $response = $this->protocol->discard()->getResponse();
+            } elseif (method_exists($this->protocol, 'discardAll')) {
+                $response = $this->protocol->discardAll()->getResponse();
+            } else {
+                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing DISCARD message.');
+                return false;
+            }
             return $this->checkResponse($response);
         } catch (BoltException $e) {
-            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
+            $this->handleError(BoltDriver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
+            return false;
         }
     }
 
@@ -150,38 +168,49 @@ class BoltStatement extends PDOStatement
             }
         }
         if (count($this->boundParameters) !== $this->placeholdersCnt) {
-            $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Amount of bound parameters is not equal amount of placeholders in query.']);
+            $this->handleError(BoltDriver::ERR_PARAMETER, 'Amount of bound parameters is not equal to amount of placeholders in query.');
             return false;
         }
 
         $parameters = [];
-        foreach ($this->parsedQueryString as $i => &$part) {
+        $queryString = '';
+        foreach ($this->parsedQueryString as $i => $part) {
             if (is_array($part)) {
                 if (array_key_exists($part['placeholder'], $this->boundParameters)) {
-                    $parameters['a' . $i] = $this->sanitizeParameter(
+                    $key = $part['placeholder'];
+                    if (is_int($key)) {
+                        $key = 'a' . $i;
+                    }
+
+                    $parameters[$key] = $this->sanitizeParameter(
                         $this->boundParameters[$part['placeholder']]['var'],
                         $this->boundParameters[$part['placeholder']]['type']
                     );
-                    $part = '$a' . $i;
+                    $queryString .= '$' . $key;
                 } else {
-                    $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Placeholder from query is not defined in bound parameters.']);
+                    $this->handleError(BoltDriver::ERR_PARAMETER, 'Placeholder from query is not defined in bound parameters.');
                     return false;
                 }
+            } else {
+                $queryString .= $part;
             }
         }
 
         try {
-            /** @var Response $response */
-            $response = $this->protocol
-                ->run(implode('', $this->parsedQueryString), $parameters)
-                ->getResponse();
-
-            if ($this->checkResponse($response)) {
-                $this->columns = $response->getContent()['fields'] ?? [];
-                return true;
+            if (method_exists($this->protocol, 'run')) {
+                /** @var Response $response */
+                $response = $this->protocol
+                    ->run($queryString, $parameters)
+                    ->getResponse();
+                if ($this->checkResponse($response)) {
+                    $this->columns = $response->getContent()['fields'] ?? [];
+                    return true;
+                }
+            } else {
+                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing RUN message.');
             }
         } catch (BoltException $e) {
-            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
+            $this->handleError(BoltDriver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
 
         return false;
@@ -311,7 +340,7 @@ class BoltStatement extends PDOStatement
 
                 return $instance;
             } catch (\ReflectionException $e) {
-                throw new PDOException('Underlying Bolt library error occurred', previous: $e);
+                $this->handleError(BoltDriver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
             }
         }
         return false;
@@ -365,7 +394,14 @@ class BoltStatement extends PDOStatement
         }
 
         try {
-            $this->protocol->pull(['n' => 1]); //todo add qid
+            if (method_exists($this->protocol, 'pull')) {
+                $this->protocol->pull(['n' => 1]); //todo add qid
+            } elseif (method_exists($this->protocol, 'pullAll')) {
+                $this->protocol->pullAll();
+            } else {
+                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing PULL message.');
+                return false;
+            }
             /** @var Response $response */
             foreach ($this->protocol->getResponses() as $response) {
                 if ($response->getSignature() === $response::SIGNATURE_RECORD) {
@@ -375,7 +411,7 @@ class BoltStatement extends PDOStatement
                 }
             }
         } catch (BoltException $e) {
-            throw new PDOException('Underlying Bolt library error occurred', previous: $e);
+            $this->handleError(BoltDriver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
 
         return !is_null($this->record);
