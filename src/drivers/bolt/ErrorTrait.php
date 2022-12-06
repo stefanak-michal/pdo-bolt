@@ -60,9 +60,11 @@ trait ErrorTrait
                 $message .= ' (' . $this->failureContent['code'] . ')';
             }
             if ($errorMode === PDO::ERRMODE_EXCEPTION) {
-                throw new PDOException($message, previous: $previous);
+                $e = new PDOException($message, intval($errorCode), $previous);
+                $e->errorInfo = $this->errorInfo();
+                throw $e;
             } elseif ($errorMode === PDO::ERRMODE_WARNING) {
-                trigger_error($message, E_WARNING);
+                trigger_error($message, E_USER_WARNING);
             }
         }
     }
