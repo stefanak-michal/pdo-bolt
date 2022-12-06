@@ -20,10 +20,8 @@ class BoltStatement extends PDOStatement
     private array $parsedQueryString = [];
     private int $placeholdersCnt = 0;
     private array $columns = [];
-    private ?Response $record;
-    private array $fetchMode = [];
     private array $boundParameters = [];
-    private bool $hasMore = true;
+    private ?Records $records;
 
     use ErrorTrait;
 
@@ -204,6 +202,7 @@ class BoltStatement extends PDOStatement
                     ->getResponse();
                 if ($this->checkResponse($response)) {
                     $this->columns = $response->getContent()['fields'] ?? [];
+                    $this->records = new Records($this->protocol, $this->columns, $this->boundColumns);
                     return true;
                 }
             } else {
@@ -227,8 +226,17 @@ class BoltStatement extends PDOStatement
             case PDO::PARAM_STR:
             case PDO::PARAM_STR_CHAR:
             case PDO::PARAM_STR_NATL:
-            case PDO::PARAM_LOB: // todo https://www.php.net/manual/en/pdo.lobs.php
                 return addslashes(sprintf('%s', $value));
+            case PDO::PARAM_LOB:
+                if (is_resource($value)) {
+                    $value = unpack("N*", stream_get_contents($value));
+                } elseif (is_string($value)) {
+                    $value = explode('', $value);
+                } else {
+                    $this->handleError(BoltDriver::ERR_PARAMETER, ['message' => 'Parameter of type LOB expected string or resource.', 'code' => $type]);
+                    break;
+                }
+                return new \Bolt\packstream\Bytes($value);
             case PDO::PARAM_BOOL:
                 return boolval($value);
 
@@ -269,81 +277,32 @@ class BoltStatement extends PDOStatement
 
     public function fetch(int $mode = PDO::FETCH_BOTH, int $cursorOrientation = PDO::FETCH_ORI_NEXT, int $cursorOffset = 0): mixed
     {
-        //todo
-        if (!$this->nextRowset()) {
-            return false;
-        }
-
-        switch ($mode) {
-            case PDO::FETCH_ASSOC:
-                return array_combine($this->columns, $this->record->getContent());
-            case PDO::FETCH_BOTH:
-                return $this->record->getContent() + array_combine($this->columns, $this->record->getContent());
-            case PDO::FETCH_BOUND:
-                //todo insert into binded columns
-                return true;
-            case PDO::FETCH_CLASS:
-                break;
-            case PDO::FETCH_INTO:
-                break;
-            case PDO::FETCH_LAZY:
-                break;
-            case PDO::FETCH_NAMED:
-                break;
-            case PDO::FETCH_NUM:
-                return $this->record->getContent();
-            case PDO::FETCH_OBJ:
-                return (object)array_combine($this->columns, $this->record->getContent());
-            case PDO::FETCH_PROPS_LATE:
-                break;
-
-        }
-
-        return false;
+        $this->records->next();
+        return $this->records->valid() ? $this->records->currentAs($mode) : false;
     }
 
     public function fetchAll(int $mode = PDO::FETCH_BOTH, mixed ...$args): array
     {
         $output = [];
-        while ($this->nextRowset()) {
-            // todo
-            $output[] = $this->record->getContent();
+        $this->records->rewind();
+        while ($this->records->valid()) {
+            $output[] = $this->records->currentAs($mode, ...$args);
+            $this->records->next();
         }
         return $output;
     }
 
     public function fetchColumn(int $column = 0): mixed
     {
-        if ($this->nextRowset()) {
-            return $this->record->getContent()[$column];
-        }
-        return false;
+        $this->records->next();
+        return $this->records->valid() ? $this->records->currentAs(PDO::FETCH_NUM)[$column] : false;
     }
 
     #[\ReturnTypeWillChange]
     public function fetchObject(?string $class = "stdClass", array $constructorArgs = []): object|bool
     {
-        if ($this->nextRowset()) {
-            try {
-                $ref = new \ReflectionClass($class);
-                $instance = $ref->newInstanceWithoutConstructor();
-
-                $arr = array_combine($this->columns, $this->record->getContent());
-                foreach ($ref->getProperties() as $property) {
-                    $property->setValue($instance, $arr[$property->getName()]);
-                }
-
-                $constructor = $ref->getConstructor();
-                if ($constructor instanceof \ReflectionMethod) {
-                    $constructor->invokeArgs($instance, $constructorArgs);
-                }
-
-                return $instance;
-            } catch (\ReflectionException $e) {
-                $this->handleError(BoltDriver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
-            }
-        }
-        return false;
+        $this->records->next();
+        return $this->records->valid() ? $this->records->currentAs(PDO::FETCH_CLASS, $class, $constructorArgs) : false;
     }
 
     public function setAttribute(int $attribute, mixed $value): bool
@@ -380,45 +339,22 @@ class BoltStatement extends PDOStatement
 
     public function setFetchMode($mode, $className = null, ...$params): bool
     {
-        //todo check if $mode is supported
-        $this->fetchMode = [$mode, $className, $params];
+        if (is_null($this->records)) {
+            return false;
+        }
+        $this->records->setFetchMode($mode, $className, ...$params);
         return true;
     }
 
     public function nextRowset(): bool
     {
-        $this->record = null;
-
-        if (!$this->hasMore) {
-            return false;
-        }
-
-        try {
-            if (method_exists($this->protocol, 'pull')) {
-                $this->protocol->pull(['n' => 1]); //todo add qid
-            } elseif (method_exists($this->protocol, 'pullAll')) {
-                $this->protocol->pullAll();
-            } else {
-                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing PULL message.');
-                return false;
-            }
-            /** @var Response $response */
-            foreach ($this->protocol->getResponses() as $response) {
-                if ($response->getSignature() === $response::SIGNATURE_RECORD) {
-                    $this->record = $response;
-                } elseif ($this->checkResponse($response)) {
-                    $this->hasMore = $response->getContent()['has_more'] ?? false;
-                }
-            }
-        } catch (BoltException $e) {
-            $this->handleError(BoltDriver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
-        }
-
-        return !is_null($this->record);
+        $this->records->next();
+        return $this->records->valid();
     }
 
     public function getIterator(): Iterator
     {
-        return $this->protocol->getResponses();
+        $this->records->rewind();
+        return $this->records;
     }
 }

@@ -34,7 +34,10 @@ class BoltDriver implements IDriver
     public const ERR_PARAMETER = '05000';
     public const ERR_PARAMETER_TYPE_NOT_SUPPORTED = '05001';
     public const ERR_PARAMETER_PLACEHOLDER_MISMATCH = '05002';
-    public const ERR_BOLT = '06000';
+    public const ERR_COLUMN = '06000';
+    public const ERR_FETCH_COLUMN_NOT_DEFINED = '06001';
+    public const ERR_FETCH_OBJECT = '06002';
+    public const ERR_BOLT = '07000';
 
     private AProtocol $protocol;
     private IConnection $connection;
@@ -264,9 +267,9 @@ class BoltDriver implements IDriver
 
     public function query(string $statement, int $mode = PDO::ATTR_DEFAULT_FETCH_MODE, ...$fetch_mode_args): BoltStatement|bool
     {
-        //todo $mode
         $stmt = new BoltStatement($this->protocol, $statement, $this->attributes);
         $result = $stmt->execute();
+        $stmt->setFetchMode($mode, ...$fetch_mode_args);
         return $result ? $stmt : false;
     }
 
