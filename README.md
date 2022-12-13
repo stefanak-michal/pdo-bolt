@@ -15,7 +15,7 @@ Right now there is no official C/C++ bolt driver and therefore it is not possibl
 ## Requirements
 
 - PHP >= 8.0
-- [Bolt library](https://github.com/neo4j-php/Bolt)
+- [Bolt library](https://packagist.org/packages/stefanak-michal/bolt)
 
 ## Installation
 
