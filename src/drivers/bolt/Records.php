@@ -86,7 +86,7 @@ class Records implements Iterator
                 } elseif (array_key_exists($this->columns[$i], $this->boundColumns)) {
                     $this->boundColumns[$this->columns[$i]]['var'] = $value;
                 } else {
-                    $this->handleError(BoltDriver::ERR_FETCH_COLUMN_NOT_DEFINED, 'Column "' . $i + 1 . '" or "' . $this->columns[$i] . '" not bound.');
+                    $this->handleError(Driver::ERR_FETCH_COLUMN_NOT_DEFINED, 'Column "' . $i + 1 . '" or "' . $this->columns[$i] . '" not bound.');
                     return false;
                 }
             }
@@ -94,14 +94,14 @@ class Records implements Iterator
             if ($this->recordAsObject($mode & PDO::FETCH_CLASSTYPE ? reset($this->columns) : ($args[0] ?? null), $args[1] ?? [], $mode & PDO::FETCH_PROPS_LATE)) {
                 return $this->recordAsObject;
             } else {
-                $this->handleError(BoltDriver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
+                $this->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
             }
         } elseif ($mode & PDO::FETCH_INTO) {
             if ($this->recordToObject()) {
                 //todo check if should return object or true/false
                 return $this->recordAsObject;
             } else {
-                $this->handleError(BoltDriver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
+                $this->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
             }
         } elseif ($mode & PDO::FETCH_LAZY) {
             //todo test on other db and do it by that as example
@@ -124,7 +124,7 @@ class Records implements Iterator
             if ($this->recordAsObject()) {
                 return $this->recordAsObject;
             } else {
-                $this->handleError(BoltDriver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
+                $this->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
             }
         }
         return null;
@@ -138,7 +138,7 @@ class Records implements Iterator
             } elseif (method_exists($this->protocol, 'pullAll')) {
                 $this->protocol->pullAll();
             } else {
-                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing PULL message.');
+                $this->handleError(Driver::ERR_BOLT, 'Low level bolt library is missing PULL message.');
                 return false;
             }
             /** @var Response $response */
@@ -151,7 +151,7 @@ class Records implements Iterator
             }
             return true;
         } catch (BoltException $e) {
-            $this->handleError(BoltDriver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
+            $this->handleError(Driver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
         return false;
     }
@@ -196,7 +196,7 @@ class Records implements Iterator
             $this->recordAsObject = $instance;
             return true;
         } catch (\ReflectionException $e) {
-            $this->handleError(BoltDriver::ERR_FETCH_OBJECT, previous: $e);
+            $this->handleError(Driver::ERR_FETCH_OBJECT, previous: $e);
         }
         return false;
     }

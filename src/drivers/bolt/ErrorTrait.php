@@ -36,10 +36,10 @@ trait ErrorTrait
             case $response::SIGNATURE_SUCCESS:
                 return true;
             case $response::SIGNATURE_FAILURE:
-                $this->handleError(BoltDriver::ERR_MESSAGE_FAILURE, $response->getContent());
+                $this->handleError(Driver::ERR_MESSAGE_FAILURE, $response->getContent());
                 return false;
             case $response::SIGNATURE_IGNORED:
-                $this->handleError(BoltDriver::ERR_MESSAGE_IGNORED, ['code' => 'IGNORED', 'message' => 'Request has not been carried out.']);
+                $this->handleError(Driver::ERR_MESSAGE_IGNORED, ['code' => 'IGNORED', 'message' => 'Request has not been carried out.']);
                 return false;
         }
         return false;

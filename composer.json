@@ -1,7 +1,15 @@
 {
     "name": "stefanak-michal/pdo-bolt",
     "description": "PDO for Bolt protocol",
-    "keywords": ["neo4j", "bolt", "socket", "database", "memgraph", "amazon neptune", "graph database"],
+    "keywords": [
+        "neo4j",
+        "bolt",
+        "socket",
+        "database",
+        "memgraph",
+        "amazon neptune",
+        "graph database"
+    ],
     "homepage": "https://github.com/stefanak-michal/pdo-bolt",
     "type": "library",
     "readme": "README.md",
@@ -18,7 +26,7 @@
     "support": {
         "issues": "https://github.com/stefanak-michal/pdo-bolt/issues",
         "source": "https://github.com/stefanak-michal/pdo-bolt",
-		"docs": "https://github.com/stefanak-michal/pdo-bolt"
+        "docs": "https://github.com/stefanak-michal/pdo-bolt"
     },
     "funding": [
         {

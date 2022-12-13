@@ -13,13 +13,13 @@ use pdo_bolt\drivers\IDriver;
 use PDO;
 
 /**
- * Class BoltDriver
+ * Class Bolt Driver
  * @author Michal Stefanak
  * @link https://github.com/stefanak-michal/pdo-bolt
  *
  * @todo bookmarks
  */
-class BoltDriver implements IDriver
+class Driver implements IDriver
 {
     public const ERR_AUTH = '01000';
     public const ERR_AUTH_LOGIN = '01001';
@@ -214,9 +214,9 @@ class BoltDriver implements IDriver
         }
     }
 
-    public function prepare(string $query, array $options = []): BoltStatement
+    public function prepare(string $query, array $options = []): Statement
     {
-        return new BoltStatement($this->protocol, $query, $options + $this->attributes);
+        return new Statement($this->protocol, $query, $options + $this->attributes);
     }
 
     public function exec(string $statement): int|bool
@@ -232,7 +232,7 @@ class BoltDriver implements IDriver
                     return false;
                 }
             } else {
-                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing RUN message.');
+                $this->handleError(self::ERR_BOLT, 'Low level bolt library is missing RUN message.');
                 return false;
             }
 
@@ -241,7 +241,7 @@ class BoltDriver implements IDriver
             } elseif (method_exists($this->protocol, 'discardAll')) {
                 $this->protocol->discardAll();
             } else {
-                $this->handleError(BoltDriver::ERR_BOLT, 'Low level bolt library is missing DISCARD message.');
+                $this->handleError(self::ERR_BOLT, 'Low level bolt library is missing DISCARD message.');
                 return false;
             }
 
@@ -264,9 +264,9 @@ class BoltDriver implements IDriver
         return $output;
     }
 
-    public function query(string $statement, int $mode = PDO::ATTR_DEFAULT_FETCH_MODE, ...$fetch_mode_args): BoltStatement|bool
+    public function query(string $statement, int $mode = PDO::ATTR_DEFAULT_FETCH_MODE, ...$fetch_mode_args): Statement|bool
     {
-        $stmt = new BoltStatement($this->protocol, $statement, $this->attributes);
+        $stmt = new Statement($this->protocol, $statement, $this->attributes);
         $result = $stmt->execute();
         $stmt->setFetchMode($mode, ...$fetch_mode_args);
         return $result ? $stmt : false;

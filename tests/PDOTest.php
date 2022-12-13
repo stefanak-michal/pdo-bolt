@@ -2,6 +2,7 @@
 
 namespace pdo_bolt\tests;
 
+use pdo_bolt\drivers\bolt\Statement as BoltStatement;
 use pdo_bolt\PDO;
 use PDOException;
 
@@ -12,11 +13,6 @@ use PDOException;
  */
 class PDOTest extends \PHPUnit\Framework\TestCase
 {
-    //todo all three variants for dsn in construct
-    //todo add test construct with ssl
-    //todo each method
-    //todo each FETCH_MODE
-    //todo each PARAM_TYPE
     //todo github action with yii framework ?
 
     public function testConstruct(): PDO
@@ -65,10 +61,37 @@ class PDOTest extends \PHPUnit\Framework\TestCase
         $this->assertEquals("abc \' def \\\ ", $pdo->quote("abc ' def \ "));
     }
 
-    //prepare
-    //exec
-    //query
+    /**
+     * @depends testConstruct
+     */
+    public function testPrepare(PDO $pdo)
+    {
+        $stmt = $pdo->prepare('RETURN 1 as num');
+        $this->assertInstanceOf(BoltStatement::class, $stmt);
+    }
 
+    /**
+     * @depends testConstruct
+     */
+    public function testExec(PDO $pdo)
+    {
+        $this->assertTrue($pdo->beginTransaction());
+        $result = $pdo->exec('CREATE (:Test { i: 123 })');
+        $this->assertEquals(1, $result);
+        $this->assertTrue($pdo->rollBack());
+    }
+
+    /**
+     * @depends testConstruct
+     */
+    public function testQuery(PDO $pdo)
+    {
+        $stmt = $pdo->query('RETURN 1 as num', PDO::FETCH_ASSOC);
+        $this->assertInstanceOf(BoltStatement::class, $stmt);
+        foreach ($stmt as $row) {
+            $this->assertEquals(['num' => 1], $row);
+        }
+    }
 
     /**
      * @depends testConstruct
@@ -89,7 +112,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
             $pdo->lastInsertId();
             $this->markTestIncomplete('PDOException was not thrown');
         } catch (PDOException $e) {
-            $this->assertEquals(\pdo_bolt\drivers\bolt\BoltDriver::ERR_FETCH, $pdo->errorCode());
+            $this->assertEquals(\pdo_bolt\drivers\bolt\Driver::ERR_FETCH, $pdo->errorCode());
             $this->assertNotEmpty($pdo->errorInfo()[2]);
         }
 

@@ -4,6 +4,7 @@ namespace pdo_bolt;
 
 use pdo_bolt\drivers\IDriver;
 use PDOStatement;
+use PDOException;
 
 /**
  * Class PDO
@@ -41,12 +42,34 @@ class PDO extends \PDO
      */
     public function __construct(string $dsn, ?string $username = null, ?string $password = null, ?array $options = null)
     {
-        //todo add support for URI and alias
-        $driverName = explode(':', $dsn, 2)[0];
-        if ($driverName === 'bolt') {
-            $this->driver = new drivers\bolt\BoltDriver($dsn, $username, $password, $options);
+        //alias
+        if (!str_contains($dsn, ':')) {
+            $dsn = get_cfg_var('pdo.dsn.' . $dsn);
+            if (!$dsn) {
+                throw new PDOException('Argument #1 ($dsn) must be a valid data source name', intval(drivers\bolt\Driver::ERR_AUTH));
+            }
+        }
+
+        list($scheme, $rest) = explode(':', $dsn, 2);
+
+        //uri
+        if ($scheme === 'uri') {
+            $dsn = file_get_contents($rest);
+            if (!$rest) {
+                throw new PDOException('Argument #1 ($dsn) must be a valid data source name', intval(drivers\bolt\Driver::ERR_AUTH));
+            } else {
+                $dsn = trim($dsn);
+            }
+            $scheme = explode(':', $dsn, 2)[0];
+        }
+
+        //bolt
+        if ($scheme === 'bolt') {
+            $this->driver = new drivers\bolt\Driver($dsn, $username, $password, $options);
             return;
         }
+
+        //origin
         parent::__construct($dsn, $username, $password, $options);
     }
 
