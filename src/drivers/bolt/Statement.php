@@ -25,7 +25,9 @@ class Statement extends PDOStatement
 
     public function __construct(private Driver $driver, string $query)
     {
-        $this->queryString = $query;
+        $ref = new \ReflectionClass($this);
+        $prop = $ref->getProperty('queryString');
+        $prop->setValue($this, $query);
         $this->parseQueryString();
     }
 
