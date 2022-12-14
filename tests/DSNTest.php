@@ -6,7 +6,8 @@ use pdo_bolt\PDO;
 
 /**
  * Class DSNTest
- * @package pdo_bolt\tests
+ * @author Michal Stefanak
+ * @link https://github.com/stefanak-michal/pdo-bolt
  */
 class DSNTest extends \PHPUnit\Framework\TestCase
 {
@@ -16,7 +17,7 @@ class DSNTest extends \PHPUnit\Framework\TestCase
             'bolt:host=demo.neo4jlabs.com;port=7687;appname=pdo-bolt',
             'movies',
             'movies',
-            ['ssl' => []]
+            ['ssl' => [], 'protocol_versions' => [4.4]]
         );
         $this->assertInstanceOf(PDO::class, $pdo);
     }
@@ -27,7 +28,7 @@ class DSNTest extends \PHPUnit\Framework\TestCase
             'uri:file://' . __DIR__ . DIRECTORY_SEPARATOR . 'dsn.bolt',
             'movies',
             'movies',
-            ['ssl' => []]
+            ['ssl' => [], 'protocol_versions' => [4.4]]
         );
         $this->assertInstanceOf(PDO::class, $pdo);
     }
@@ -37,7 +38,8 @@ class DSNTest extends \PHPUnit\Framework\TestCase
         $pdo = new PDO(
             'mybolt',
             $GLOBALS['NEO_USER'] ?? 'neo4j',
-            $GLOBALS['NEO_PASS'] ?? 'neo4j'
+            $GLOBALS['NEO_PASS'] ?? 'neo4j',
+            ['protocol_versions' => [5]]
         );
         $this->assertInstanceOf(PDO::class, $pdo);
     }

@@ -229,14 +229,14 @@ class Statement extends PDOStatement
                 return addslashes(sprintf('%s', $value));
             case PDO::PARAM_LOB:
                 if (is_resource($value)) {
-                    $value = unpack("N*", stream_get_contents($value));
+                    $value = mb_str_split(stream_get_contents($value), 1, '8bit');
                 } elseif (is_string($value)) {
-                    $value = explode('', $value);
+                    $value = str_split($value, 1);
                 } else {
                     $this->handleError(Driver::ERR_PARAMETER, ['message' => 'Parameter of type LOB expected string or resource.', 'code' => $type]);
                     break;
                 }
-                return new \Bolt\packstream\Bytes($value);
+                return (new \Bolt\packstream\Bytes($value));
             case PDO::PARAM_BOOL:
                 return boolval($value);
 

@@ -46,7 +46,7 @@ class PDO extends \PDO
         if (!str_contains($dsn, ':')) {
             $dsn = get_cfg_var('pdo.dsn.' . $dsn);
             if (!$dsn) {
-                throw new PDOException('Argument #1 ($dsn) must be a valid data source name', intval(drivers\bolt\Driver::ERR_AUTH));
+                throw new PDOException('Argument #1 ($dsn) must be a valid data source name');
             }
         }
 
@@ -56,7 +56,7 @@ class PDO extends \PDO
         if ($scheme === 'uri') {
             $dsn = file_get_contents($rest);
             if (!$rest) {
-                throw new PDOException('Argument #1 ($dsn) must be a valid data source name', intval(drivers\bolt\Driver::ERR_AUTH));
+                throw new PDOException('Argument #1 ($dsn) must be a valid data source name');
             } else {
                 $dsn = trim($dsn);
             }

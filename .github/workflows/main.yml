@@ -9,11 +9,11 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-20.04
-    name: "Running Integration tests for PHP ${{ matrix.php-version }} and Neo4j"
+    name: "Running Integration tests for PHP ${{ matrix.php-version }} and Neo4j ^5"
     strategy:
       fail-fast: false
       matrix:
-        neo4j-version: ["latest"]
+        neo4j-version: ["5"]
         php-version: ['8.0', '8.1', '8.2']
 
     services:

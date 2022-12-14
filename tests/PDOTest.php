@@ -22,7 +22,8 @@ class PDOTest extends \PHPUnit\Framework\TestCase
         $pdo = new PDO(
             'bolt:host=' . ($GLOBALS['NEO_HOST'] ?? '127.0.0.1') . ';port=' . ($GLOBALS['NEO_PORT'] ?? 7687) . ';appname=pdo-bolt',
             $GLOBALS['NEO_USER'] ?? 'neo4j',
-            $GLOBALS['NEO_PASS'] ?? 'neo4j'
+            $GLOBALS['NEO_PASS'] ?? 'neo4j',
+            ['protocol_versions' => [5]]
         );
         $this->assertInstanceOf(PDO::class, $pdo);
         return $pdo;
