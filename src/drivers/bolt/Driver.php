@@ -16,8 +16,6 @@ use PDO;
  * Class Bolt Driver
  * @author Michal Stefanak
  * @link https://github.com/stefanak-michal/pdo-bolt
- *
- * @todo bookmarks
  */
 class Driver implements IDriver
 {
@@ -39,13 +37,14 @@ class Driver implements IDriver
     public const ERR_FETCH_OBJECT = '06002';
     public const ERR_BOLT = '07000';
 
-    private AProtocol $protocol;
+    public AProtocol $protocol;
     private IConnection $connection;
+    private bool $inTransaction = false;
+    private string $dbname;
+    public Bookmarks $bookmarks;
 
     private string $errorCode = '00000';
     private array $failureContent = [];
-    private bool $inTransaction = false;
-    private string $dbname;
 
     private array $attributes = [
         PDO::ATTR_TIMEOUT => 15,
@@ -53,10 +52,9 @@ class Driver implements IDriver
         PDO::ATTR_CLIENT_VERSION => null,
         PDO::ATTR_DRIVER_NAME => null,
         PDO::ATTR_SERVER_INFO => null,
-        //todo add more needed to make them available
+        PDO::ATTR_STATEMENT_CLASS => Statement::class,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_BOTH
     ];
-
-    use ErrorTrait;
 
     public function __construct(string $dsn, ?string $username = null, ?string $password = null, ?array $options = null)
     {
@@ -132,13 +130,15 @@ class Driver implements IDriver
         } catch (BoltException $e) {
             $this->handleError(self::ERR_AUTH, $e->getMessage(), errorMode: PDO::ERRMODE_EXCEPTION);
         }
+
+        $this->bookmarks = new Bookmarks();
     }
 
     public function beginTransaction(): bool
     {
         try {
             if (method_exists($this->protocol, 'begin')) {
-                $response = $this->protocol->begin()->getResponse();
+                $response = $this->protocol->begin($this->getExtraDictionary())->getResponse();
             } else {
                 $this->handleError(self::ERR_TRANSACTION_NOT_SUPPORTED);
                 return false;
@@ -164,6 +164,7 @@ class Driver implements IDriver
                 return false;
             }
             if ($this->checkResponse($response)) {
+                $this->bookmarks->add($response->getContent()['bookmark'] ?? '');
                 $this->inTransaction = false;
                 return true;
             }
@@ -214,9 +215,10 @@ class Driver implements IDriver
         }
     }
 
-    public function prepare(string $query, array $options = []): Statement
+    public function prepare(string $query, array $options = []): \PDOStatement
     {
-        return new Statement($this->protocol, $query, $options + $this->attributes);
+        $cls = $this->getAttribute(PDO::ATTR_STATEMENT_CLASS);
+        return new $cls($this, $query);
     }
 
     public function exec(string $statement): int|bool
@@ -225,7 +227,7 @@ class Driver implements IDriver
             if (method_exists($this->protocol, 'run')) {
                 /** @var Response $runResponse */
                 $runResponse = $this->protocol
-                    ->run($statement)
+                    ->run($statement, [], $this->getExtraDictionary())
                     ->getResponse();
 
                 if (!$this->checkResponse($runResponse)) {
@@ -255,6 +257,7 @@ class Driver implements IDriver
         /** @var Response $response */
         foreach ($iterator as $response) {
             if ($this->checkResponse($response) && $response->getMessage() === $response::MESSAGE_DISCARD) {
+                $this->bookmarks->add($response->getContent()['bookmark'] ?? '');
                 $output = ($response->getContent()['stats']['nodes-created'] ?? 0)
                     + ($response->getContent()['stats']['nodes-deleted'] ?? 0)
                     + ($response->getContent()['stats']['relationships-created'] ?? 0)
@@ -264,9 +267,10 @@ class Driver implements IDriver
         return $output;
     }
 
-    public function query(string $statement, int $mode = PDO::ATTR_DEFAULT_FETCH_MODE, ...$fetch_mode_args): Statement|bool
+    public function query(string $statement, int $mode = PDO::ATTR_DEFAULT_FETCH_MODE, ...$fetch_mode_args): \PDOStatement|bool
     {
-        $stmt = new Statement($this->protocol, $statement, $this->attributes);
+        $cls = $this->getAttribute(PDO::ATTR_STATEMENT_CLASS);
+        $stmt = new $cls($this, $statement);
         $result = $stmt->execute();
         $stmt->setFetchMode($mode, ...$fetch_mode_args);
         return $result ? $stmt : false;
@@ -290,9 +294,88 @@ class Driver implements IDriver
             case PDO::ATTR_TIMEOUT:
                 $this->connection->setTimeout(floatval($value));
                 break;
-            //todo add more
         }
 
         return true;
+    }
+
+    /**
+     * Reset bolt connection to initial state
+     */
+    public function reset(): bool
+    {
+        try {
+            /** @var Response $response */
+            $response = $this->protocol->reset()->getResponse();
+            return $this->checkResponse($response);
+        } catch (BoltException $e) {
+            $this->handleError(self::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
+        }
+        return false;
+    }
+
+    public function errorCode(): ?string
+    {
+        return $this->errorCode;
+    }
+
+    public function errorInfo(): array
+    {
+        return [
+            $this->errorCode,
+            $this->failureContent['code'] ?? '',
+            $this->failureContent['message'] ?? ''
+        ];
+    }
+
+    public function checkResponse(Response $response): bool
+    {
+        switch ($response->getSignature()) {
+            case $response::SIGNATURE_SUCCESS:
+                return true;
+            case $response::SIGNATURE_FAILURE:
+                $this->handleError(Driver::ERR_MESSAGE_FAILURE, $response->getContent());
+                return false;
+            case $response::SIGNATURE_IGNORED:
+                $this->handleError(Driver::ERR_MESSAGE_IGNORED, ['code' => 'IGNORED', 'message' => 'Request has not been carried out.']);
+                return false;
+        }
+        return false;
+    }
+
+    public function handleError(string $errorCode = PDO::ERR_NONE, array|string $failureContent = [], ?\Throwable $previous = null, ?int $errorMode = null): void
+    {
+        $this->errorCode = $errorCode;
+        $this->failureContent = is_string($failureContent) ? ['message' => $failureContent] : $failureContent;
+
+        if (!str_starts_with($errorCode, '00')) {
+            if (is_null($errorMode)) {
+                $errorMode = $this->getAttribute(PDO::ATTR_ERRMODE);
+            }
+
+            $message= 'CQLSTATE[' . $errorCode . '] ' . ($this->failureContent['message'] ?? '');
+            if (!empty($this->failureContent['code'])) {
+                $message .= ' (' . $this->failureContent['code'] . ')';
+            }
+            if ($errorMode === PDO::ERRMODE_EXCEPTION) {
+                $e = new \PDOException($message, intval($errorCode), $previous);
+                $e->errorInfo = $this->errorInfo();
+                throw $e;
+            } elseif ($errorMode === PDO::ERRMODE_WARNING) {
+                trigger_error($message, E_USER_WARNING);
+            }
+        }
+    }
+
+    public function getExtraDictionary(): array
+    {
+        $output = [];
+        if (!empty($this->dbname)) {
+            $output['db'] = $this->dbname;
+        }
+        if ($this->bookmarks->hasAny()) {
+            $output['bookmarks'] = $this->bookmarks->get();
+        }
+        return $output;
     }
 }

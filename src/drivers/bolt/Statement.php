@@ -3,7 +3,6 @@
 namespace pdo_bolt\drivers\bolt;
 
 use Bolt\error\BoltException;
-use Bolt\protocol\AProtocol;
 use Bolt\protocol\Response;
 use Iterator;
 use PDO;
@@ -24,15 +23,11 @@ class Statement extends PDOStatement
     private ?Records $records;
     private int $qid = -1;
 
-    use ErrorTrait;
-
-    public function __construct(private AProtocol $protocol, string $query, private array $attributes = [])
+    public function __construct(private Driver $driver, string $query)
     {
         $this->queryString = $query;
         $this->parseQueryString();
     }
-
-    // todo bookmarks
 
     private function parseQueryString(): void
     {
@@ -43,7 +38,7 @@ class Statement extends PDOStatement
                 return $item[0];
             }, array_column($matches[0], 0)));
             if (count($n) > 1) {
-                $this->handleError(Driver::ERR_PARAMETER_PLACEHOLDER_MISMATCH, 'Different placeholders in query at once is not supported.');
+                $this->driver->handleError(Driver::ERR_PARAMETER_PLACEHOLDER_MISMATCH, 'Different placeholders in query at once is not supported.');
                 return;
             }
         }
@@ -124,19 +119,22 @@ class Statement extends PDOStatement
     {
         try {
             /** @var Response $response */
-            if (method_exists($this->protocol, 'discard')) {
-                $response = $this->protocol->discard(['qid' => $this->qid])->getResponse();
-            } elseif (method_exists($this->protocol, 'discardAll')) {
-                $response = $this->protocol->discardAll()->getResponse();
+            if (method_exists($this->driver->protocol, 'discard')) {
+                $response = $this->driver->protocol->discard(['qid' => $this->qid])->getResponse();
+            } elseif (method_exists($this->driver->protocol, 'discardAll')) {
+                $response = $this->driver->protocol->discardAll()->getResponse();
             } else {
-                $this->handleError(Driver::ERR_BOLT, 'Low level bolt library is missing DISCARD message.');
+                $this->driver->handleError(Driver::ERR_BOLT, 'Low level bolt library is missing DISCARD message.');
                 return false;
             }
-            return $this->checkResponse($response);
+            if ($this->driver->checkResponse($response)) {
+                $this->driver->bookmarks->add($response->getContent()['bookmark'] ?? '');
+                return true;
+            }
         } catch (BoltException $e) {
-            $this->handleError(Driver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
-            return false;
+            $this->driver->handleError(Driver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
+        return false;
     }
 
     public function columnCount(): int
@@ -182,7 +180,7 @@ class Statement extends PDOStatement
             }
         }
         if (count($this->boundParameters) !== $this->placeholdersCnt) {
-            $this->handleError(Driver::ERR_PARAMETER, 'Amount of bound parameters is not equal to amount of placeholders in query.');
+            $this->driver->handleError(Driver::ERR_PARAMETER, 'Amount of bound parameters is not equal to amount of placeholders in query.');
             return false;
         }
 
@@ -202,7 +200,7 @@ class Statement extends PDOStatement
                     );
                     $queryString .= '$' . $key;
                 } else {
-                    $this->handleError(Driver::ERR_PARAMETER, 'Placeholder from query is not defined in bound parameters.');
+                    $this->driver->handleError(Driver::ERR_PARAMETER, 'Placeholder from query is not defined in bound parameters.');
                     return false;
                 }
             } else {
@@ -211,22 +209,22 @@ class Statement extends PDOStatement
         }
 
         try {
-            if (method_exists($this->protocol, 'run')) {
+            if (method_exists($this->driver->protocol, 'run')) {
                 /** @var Response $response */
-                $response = $this->protocol
-                    ->run($queryString, $parameters)
+                $response = $this->driver->protocol
+                    ->run($queryString, $parameters, $this->driver->getExtraDictionary())
                     ->getResponse();
-                if ($this->checkResponse($response)) {
+                if ($this->driver->checkResponse($response)) {
                     $this->columns = $response->getContent()['fields'] ?? [];
                     $this->qid = $response->getContent()['qid'] ?? -1;
-                    $this->records = new Records($this->protocol, $this->columns, $this->boundColumns, $this->qid);
+                    $this->records = new Records($this->driver, $this->columns, $this->boundColumns, $this->qid);
                     return true;
                 }
             } else {
-                $this->handleError(Driver::ERR_BOLT, 'Low level bolt library is missing RUN message.');
+                $this->driver->handleError(Driver::ERR_BOLT, 'Low level bolt library is missing RUN message.');
             }
         } catch (BoltException $e) {
-            $this->handleError(Driver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
+            $this->driver->handleError(Driver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
 
         return false;
@@ -250,7 +248,7 @@ class Statement extends PDOStatement
                 } elseif (is_string($value)) {
                     $value = str_split($value, 1);
                 } else {
-                    $this->handleError(Driver::ERR_PARAMETER, ['message' => 'Parameter of type LOB expected string or resource.', 'code' => $type]);
+                    $this->driver->handleError(Driver::ERR_PARAMETER, ['message' => 'Parameter of type LOB expected string or resource.', 'code' => $type]);
                     break;
                 }
                 return (new \Bolt\packstream\Bytes($value));
@@ -264,7 +262,7 @@ class Statement extends PDOStatement
                 if (is_array($value) || $value instanceof \Bolt\packstream\IPackListGenerator) {
                     return $value;
                 }
-                $this->handleError(Driver::ERR_PARAMETER, ['message' => 'Bolt list parameter has to be array or IPackListGenerator instance.', 'code' => $type]);
+                $this->driver->handleError(Driver::ERR_PARAMETER, ['message' => 'Bolt list parameter has to be array or IPackListGenerator instance.', 'code' => $type]);
                 break;
             case \pdo_bolt\PDO::BOLT_PARAM_DICTIONARY:
                 if (gettype($value) === 'object') {
@@ -272,23 +270,23 @@ class Statement extends PDOStatement
                 } elseif (is_array($value)) {
                     return (object)$value;
                 }
-                $this->handleError(Driver::ERR_PARAMETER, ['message' => 'Bolt dictionary parameter has to be object, array or IPackDictionaryGenerator instance.', 'code' => $type]);
+                $this->driver->handleError(Driver::ERR_PARAMETER, ['message' => 'Bolt dictionary parameter has to be object, array or IPackDictionaryGenerator instance.', 'code' => $type]);
                 break;
             case \pdo_bolt\PDO::BOLT_PARAM_STRUCTURE:
                 if ($value instanceof \Bolt\protocol\IStructure) {
                     return $value;
                 }
-                $this->handleError(Driver::ERR_PARAMETER, ['message' => 'Bolt structure parameter has to be IStructure instance.', 'code' => $type]);
+                $this->driver->handleError(Driver::ERR_PARAMETER, ['message' => 'Bolt structure parameter has to be IStructure instance.', 'code' => $type]);
                 break;
             case \pdo_bolt\PDO::BOLT_PARAM_BYTES:
                 if ($value instanceof \Bolt\packstream\Bytes) {
                     return $value;
                 }
-                $this->handleError(Driver::ERR_PARAMETER, ['message' => 'Bolt bytes parameter has to be Bytes instance.', 'code' => $type]);
+                $this->driver->handleError(Driver::ERR_PARAMETER, ['message' => 'Bolt bytes parameter has to be Bytes instance.', 'code' => $type]);
                 break;
         }
 
-        $this->handleError(Driver::ERR_PARAMETER_TYPE_NOT_SUPPORTED);
+        $this->driver->handleError(Driver::ERR_PARAMETER_TYPE_NOT_SUPPORTED);
         return false;
     }
 
@@ -324,18 +322,12 @@ class Statement extends PDOStatement
 
     public function setAttribute(int $attribute, mixed $value): bool
     {
-        if (!array_key_exists($attribute, $this->attributes)) {
-            $this->handleError(Driver::ERR_ATTRIBUTE_NOT_SUPPORTED);
-            return false;
-        }
-
-        $this->attributes[$attribute] = $value;
-        return true;
+        return $this->driver->setAttribute($attribute, $value);
     }
 
     public function getAttribute(int $name): mixed
     {
-        return $this->attributes[$name] ?? null;
+        return $this->driver->getAttribute($name);
     }
 
     #[\ReturnTypeWillChange]
@@ -372,5 +364,15 @@ class Statement extends PDOStatement
     public function getIterator(): Iterator
     {
         return $this->records;
+    }
+
+    public function errorCode(): string
+    {
+        return $this->driver->errorCode();
+    }
+
+    public function errorInfo(): array
+    {
+        return $this->driver->errorInfo();
     }
 }

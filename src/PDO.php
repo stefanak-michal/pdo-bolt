@@ -78,7 +78,7 @@ class PDO extends \PDO
         if (!is_null($this->driver) && method_exists($this->driver, $method)) {
             return $this->driver->{$method}(...$args);
         }
-        return parent::{$method}(...$args);
+        return is_callable('parent::' . $method) ? parent::{$method}(...$args) : false;
     }
 
     public function beginTransaction(): bool
@@ -159,4 +159,11 @@ class PDO extends \PDO
         return $this->__invokeDriverMethod(__FUNCTION__);
     }
 
+    /**
+     * Reset connection to initial state
+     */
+    public function reset(): bool
+    {
+        return $this->__invokeDriverMethod(__FUNCTION__);
+    }
 }

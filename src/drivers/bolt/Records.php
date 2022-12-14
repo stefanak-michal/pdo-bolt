@@ -3,7 +3,6 @@
 namespace pdo_bolt\drivers\bolt;
 
 use Bolt\error\BoltException;
-use Bolt\protocol\AProtocol;
 use Bolt\protocol\Response;
 use Iterator;
 use PDO;
@@ -21,9 +20,7 @@ class Records implements Iterator
     private array $cache = [];
     private int $key = -1;
 
-    use ErrorTrait;
-
-    public function __construct(private AProtocol $protocol, private array $columns, private array $boundColumns, private int $qid = -1)
+    public function __construct(private Driver $driver, private array $columns, private array $boundColumns, private int $qid = -1)
     {
     }
 
@@ -88,50 +85,40 @@ class Records implements Iterator
                 } elseif (array_key_exists($this->columns[$i], $this->boundColumns)) {
                     $this->boundColumns[$this->columns[$i]]['var'] = $value;
                 } else {
-                    $this->handleError(Driver::ERR_FETCH_COLUMN_NOT_DEFINED, 'Column "' . $i + 1 . '" or "' . $this->columns[$i] . '" not bound.');
+                    $this->driver->handleError(Driver::ERR_FETCH_COLUMN_NOT_DEFINED, 'Column "' . $i + 1 . '" or "' . $this->columns[$i] . '" not bound.');
                     return false;
                 }
             }
             return true;
-        } elseif (($mode & PDO::FETCH_CLASS) == PDO::FETCH_CLASS) {
-            if ($this->recordAsObject(
-                ($mode & PDO::FETCH_CLASSTYPE) == PDO::FETCH_CLASSTYPE ? reset($this->columns) : ($args[0] ?? null),
-                $args[1] ?? [],
-                ($mode & PDO::FETCH_PROPS_LATE) == PDO::FETCH_PROPS_LATE)
-            ) {
-                return $this->recordAsObject;
-            } else {
-                $this->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
-            }
         } elseif ($mode === PDO::FETCH_INTO) {
             if ($this->recordToObject()) {
-                //todo check if should return object or true/false
-                return $this->recordAsObject;
+                return true;
             } else {
-                $this->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
+                $this->driver->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
             }
         } elseif ($mode === PDO::FETCH_LAZY) {
-            //todo test on other db and do it by that as example
+            $this->driver->handleError(Driver::ERR_FETCH_OBJECT, 'Lazy fetch not implemented.');
         } elseif ($mode === PDO::FETCH_NAMED) {
-            $output = [];
-            foreach ($this->columns as $i => $column) {
-                if (array_key_exists($column, $output)) {
-                    if (!is_array($output[$column])) {
-                        $output[$column] = [$output[$column]];
-                    }
-                    $output[$column][] = $this->cache[$this->key]->getContent()[$i];
-                } else {
-                    $output[$column] = $this->cache[$this->key]->getContent()[$i];
-                }
-            }
-            return $output;
+            $this->driver->handleError(Driver::ERR_FETCH, 'Multiple result columns with the same name are not supported');
         } elseif ($mode === PDO::FETCH_NUM) {
             return $this->cache[$this->key]->getContent();
         } elseif ($mode === PDO::FETCH_OBJ) {
             if ($this->recordAsObject()) {
                 return $this->recordAsObject;
             } else {
-                $this->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
+                $this->driver->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
+            }
+        } elseif ($mode & PDO::FETCH_CLASS) {
+            if ($this->recordAsObject(
+                $mode & PDO::FETCH_CLASSTYPE
+                    ? str_replace('\\\\', '\\', $this->cache[$this->key]->getContent()[0])
+                    : ($args[0] ?? null),
+                $args[1] ?? [],
+                $mode & PDO::FETCH_PROPS_LATE
+            )) {
+                return $this->recordAsObject;
+            } else {
+                $this->driver->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
             }
         }
         return null;
@@ -140,25 +127,26 @@ class Records implements Iterator
     private function pullRecord(): bool
     {
         try {
-            if (method_exists($this->protocol, 'pull')) {
-                $this->protocol->pull(['n' => 1, 'qid' => $this->qid]);
-            } elseif (method_exists($this->protocol, 'pullAll')) {
-                $this->protocol->pullAll();
+            if (method_exists($this->driver->protocol, 'pull')) {
+                $this->driver->protocol->pull(['n' => 1, 'qid' => $this->qid]);
+            } elseif (method_exists($this->driver->protocol, 'pullAll')) {
+                $this->driver->protocol->pullAll();
             } else {
-                $this->handleError(Driver::ERR_BOLT, 'Low level bolt library is missing PULL message.');
+                $this->driver->handleError(Driver::ERR_BOLT, 'Low level bolt library is missing PULL message.');
                 return false;
             }
             /** @var Response $response */
-            foreach ($this->protocol->getResponses() as $response) {
+            foreach ($this->driver->protocol->getResponses() as $response) {
                 if ($response->getSignature() === $response::SIGNATURE_RECORD) {
                     $this->cache[] = $response;
-                } elseif ($this->checkResponse($response)) {
+                } elseif ($this->driver->checkResponse($response)) {
                     $this->hasMore = $response->getContent()['has_more'] ?? false;
+                    $this->driver->bookmarks->add($response->getContent()['bookmark'] ?? '');
                 }
             }
             return true;
         } catch (BoltException $e) {
-            $this->handleError(Driver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
+            $this->driver->handleError(Driver::ERR_BOLT, 'Underlying Bolt library error occurred', $e);
         }
         return false;
     }
@@ -189,16 +177,14 @@ class Records implements Iterator
             }
 
             $arr = array_combine($this->columns, $this->cache[$this->key]->getContent());
-            if (count($ref->getProperties()) > 0) {
-                foreach ($ref->getProperties() as $property) {
-                    if (array_key_exists($property->getName(), $arr)) {
-                        $property->setValue($instance, $arr[$property->getName()]);
-                    }
+            foreach ($ref->getProperties() as $property) {
+                if (array_key_exists($property->getName(), $arr)) {
+                    $property->setValue($instance, $arr[$property->getName()]);
+                    unset($arr[$property->getName()]);
                 }
-            } else {
-                foreach ($arr as $key => $value) {
-                    $instance->{$key} = $value;
-                }
+            }
+            foreach ($arr as $key => $value) {
+                $instance->{$key} = $value;
             }
 
             if (!$late) {
@@ -211,7 +197,7 @@ class Records implements Iterator
             $this->recordAsObject = $instance;
             return true;
         } catch (\ReflectionException $e) {
-            $this->handleError(Driver::ERR_FETCH_OBJECT, previous: $e);
+            $this->driver->handleError(Driver::ERR_FETCH_OBJECT, previous: $e);
         }
         return false;
     }

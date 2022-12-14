@@ -137,4 +137,44 @@ class PDOTest extends \PHPUnit\Framework\TestCase
 
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     }
+
+    /**
+     * @depends testConstruct
+     */
+    public function testReset(PDO $pdo): void
+    {
+        //failure recovery
+        try {
+            $pdo->query('This is not CQL');
+        } catch (PDOException) {
+            if ($pdo->errorCode() === \pdo_bolt\drivers\bolt\Driver::ERR_MESSAGE_FAILURE) {
+                $this->assertTrue($pdo->reset());
+            } else {
+                $this->markTestIncomplete('Not received expected failure');
+            }
+        }
+
+        //failure and ignored recovery
+        try {
+            $pdo->query('This is not CQL');
+        } catch (PDOException) {
+            if ($pdo->errorCode() === \pdo_bolt\drivers\bolt\Driver::ERR_MESSAGE_FAILURE) {
+                try {
+                    $pdo->query('RETURN 1 as num');
+                } catch (PDOException) {
+                    if ($pdo->errorCode() === \pdo_bolt\drivers\bolt\Driver::ERR_MESSAGE_IGNORED) {
+                        $this->assertTrue($pdo->reset());
+                    } else {
+                        $this->markTestIncomplete('Not received expected ignored message.');
+                    }
+                }
+            } else {
+                $this->markTestIncomplete('Not received expected failure message.');
+            }
+        }
+
+        //test recovered state
+        $stmt = $pdo->query('RETURN 1 as num');
+        $this->assertInstanceOf(BoltStatement::class, $stmt);
+    }
 }
