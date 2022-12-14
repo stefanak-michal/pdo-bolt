@@ -58,6 +58,7 @@ class Driver implements IDriver
 
     public function __construct(string $dsn, ?string $username = null, ?string $password = null, ?array $options = null)
     {
+        var_dump($dsn);
         list($scheme, $rest) = explode(':', $dsn, 2);
         $dsnArray = [];
         foreach (explode(';', $rest) as $entry) {
