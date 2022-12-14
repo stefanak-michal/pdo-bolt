@@ -36,7 +36,7 @@ jobs:
           php-version: ${{ matrix.php-version }}
           extensions: mbstring, sockets, pdo
           coverage: xdebug
-          ini-values: max_execution_time=0,pdo.dsn.mybolt=bolt:host=localhost;port=7687;appname=pdo-bolt
+          ini-values: max_execution_time=0,pdo.dsn.mybolt="bolt:host=localhost;port=7687;appname=pdo-bolt"
 
       - name: Install dependencies
         run: composer install --no-progress
