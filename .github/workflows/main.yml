@@ -13,12 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        neo4j-version: ["5"]
         php-version: ['8.0', '8.1', '8.2']
 
     services:
       neo4j:
-        image: neo4j:latest
+        image: neo4j:5
         env:
           NEO4J_AUTH: neo4j/nothing
         ports:
@@ -35,7 +34,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: mbstring, sockets
+          extensions: mbstring, sockets, pdo
           coverage: xdebug
           ini-values: max_execution_time=0, pdo.dsn.mybolt="bolt:host=127.0.0.1;port=7687;appname=pdo-bolt"
 
