@@ -11,7 +11,7 @@ use pdo_bolt\PDO;
  */
 class DSNTest extends \PHPUnit\Framework\TestCase
 {
-    public function testSSL()
+    public function testSSL(): void
     {
         $pdo = new PDO(
             'bolt:host=demo.neo4jlabs.com;port=7687;appname=pdo-bolt',
@@ -22,7 +22,7 @@ class DSNTest extends \PHPUnit\Framework\TestCase
         $this->assertInstanceOf(PDO::class, $pdo);
     }
 
-    public function testUriFileDsn()
+    public function testUriFileDsn(): void
     {
         $pdo = new PDO(
             'uri:file://' . __DIR__ . DIRECTORY_SEPARATOR . 'dsn.bolt',
@@ -33,7 +33,7 @@ class DSNTest extends \PHPUnit\Framework\TestCase
         $this->assertInstanceOf(PDO::class, $pdo);
     }
 
-    public function testAliasDsn()
+    public function testAliasDsn(): void
     {
         $pdo = new PDO(
             'mybolt',

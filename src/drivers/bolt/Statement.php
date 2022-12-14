@@ -22,6 +22,7 @@ class Statement extends PDOStatement
     private array $columns = [];
     private array $boundParameters = [];
     private ?Records $records;
+    private int $qid = -1;
 
     use ErrorTrait;
 
@@ -31,7 +32,6 @@ class Statement extends PDOStatement
         $this->parseQueryString();
     }
 
-    // todo this class should replace placeholders in query only if ATTR_EMULATE_PREPARES is true ..otherwise you send parameters as RUN parameters and replace placeholders with cypher placeholder ($)
     // todo bookmarks
 
     private function parseQueryString(): void
@@ -79,7 +79,6 @@ class Statement extends PDOStatement
         mixed      $driverOptions = null
     ): bool
     {
-        //todo not tested
         $this->boundColumns[$column] = [
             'var' => &$var,
             'type' => $type,
@@ -126,7 +125,7 @@ class Statement extends PDOStatement
         try {
             /** @var Response $response */
             if (method_exists($this->protocol, 'discard')) {
-                $response = $this->protocol->discard()->getResponse();
+                $response = $this->protocol->discard(['qid' => $this->qid])->getResponse();
             } elseif (method_exists($this->protocol, 'discardAll')) {
                 $response = $this->protocol->discardAll()->getResponse();
             } else {
@@ -147,13 +146,30 @@ class Statement extends PDOStatement
 
     public function rowCount(): int
     {
-        //todo can i get this info somewhere?
+        //not supported .. we don't know in advance how many records is waiting for pull
         return -1;
     }
 
     public function debugDumpParams(): ?bool
     {
-        //todo
+        echo 'CQL: [' . strlen($this->queryString) . '] ' . $this->queryString . PHP_EOL
+            . 'Params: ' . count($this->boundParameters) . PHP_EOL;
+
+        foreach ($this->boundParameters as $key => $parameter) {
+            echo 'Key: ';
+            if (is_string($key)) {
+                echo 'Name: [' . strlen($key) + 1 . '] $' . $key . PHP_EOL
+                    . 'paramno=-1' . PHP_EOL
+                    . 'name=[' . strlen($key) + 1 . '] "$' . $key . '"' . PHP_EOL;
+            } else {
+                echo 'Position #' . $key . PHP_EOL
+                    . 'paramno=' . $key . PHP_EOL
+                    . 'name=[0] ""' . PHP_EOL;
+            }
+            echo 'is_param=1' . PHP_EOL
+                . 'param_type=' . $parameter['type'] . PHP_EOL;
+        }
+
         return null;
     }
 
@@ -202,7 +218,8 @@ class Statement extends PDOStatement
                     ->getResponse();
                 if ($this->checkResponse($response)) {
                     $this->columns = $response->getContent()['fields'] ?? [];
-                    $this->records = new Records($this->protocol, $this->columns, $this->boundColumns);
+                    $this->qid = $response->getContent()['qid'] ?? -1;
+                    $this->records = new Records($this->protocol, $this->columns, $this->boundColumns, $this->qid);
                     return true;
                 }
             } else {

@@ -52,7 +52,7 @@ class ParamTypeTest extends \PHPUnit\Framework\TestCase
         yield 'float ' . $n => [\pdo_bolt\PDO::BOLT_PARAM_FLOAT, $n];
 
         yield 'list array' => [\pdo_bolt\PDO::BOLT_PARAM_LIST, range(0, 10)];
-        yield 'list generator' => [\pdo_bolt\PDO::BOLT_PARAM_LIST, new generators\ListGenerator(range(0, 9)), function (array $p) {
+        yield 'list generator' => [\pdo_bolt\PDO::BOLT_PARAM_LIST, new classes\ListGenerator(range(0, 9)), function (array $p) {
             $this->assertEquals(range(0, 9), $p);
         }];
 
@@ -60,7 +60,7 @@ class ParamTypeTest extends \PHPUnit\Framework\TestCase
         yield 'dictionary object' => [\pdo_bolt\PDO::BOLT_PARAM_DICTIONARY, (object)['a' => 123, 'b' => 'foo'], function (array $p) {
             $this->assertEquals(['a' => 123, 'b' => 'foo'], $p);
         }];
-        yield 'dictionary generator' => [\pdo_bolt\PDO::BOLT_PARAM_DICTIONARY, new generators\DictionaryGenerator(['a' => 123, 'b' => 'foo']), function (array $p) {
+        yield 'dictionary generator' => [\pdo_bolt\PDO::BOLT_PARAM_DICTIONARY, new classes\DictionaryGenerator(['a' => 123, 'b' => 'foo']), function (array $p) {
             $this->assertEquals(['a' => 123, 'b' => 'foo'], $p);
         }];
 
@@ -76,7 +76,7 @@ class ParamTypeTest extends \PHPUnit\Framework\TestCase
     /**
      * @dataProvider paramProvider
      */
-    public function testParam(int $param, mixed $value, ?callable $callback = null)
+    public function testParam(int $param, mixed $value, ?callable $callback = null): void
     {
         $stmt = self::$pdo->prepare('RETURN $p AS p');
         $this->assertInstanceOf(BoltStatement::class, $stmt);

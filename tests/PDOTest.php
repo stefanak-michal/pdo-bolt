@@ -32,7 +32,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
     /**
      * @depends testConstruct
      */
-    public function testTransaction(PDO $pdo)
+    public function testTransaction(PDO $pdo): void
     {
         $this->assertTrue($pdo->beginTransaction());
         $this->assertTrue($pdo->inTransaction());
@@ -48,7 +48,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
     /**
      * @depends testConstruct
      */
-    public function testLastInsertId(PDO $pdo)
+    public function testLastInsertId(PDO $pdo): void
     {
         $this->expectException(PDOException::class);
         $pdo->lastInsertId();
@@ -57,7 +57,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
     /**
      * @depends testConstruct
      */
-    public function testQuote(PDO $pdo)
+    public function testQuote(PDO $pdo): void
     {
         $this->assertEquals("abc \' def \\\ ", $pdo->quote("abc ' def \ "));
     }
@@ -65,7 +65,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
     /**
      * @depends testConstruct
      */
-    public function testPrepare(PDO $pdo)
+    public function testPrepare(PDO $pdo): void
     {
         $stmt = $pdo->prepare('RETURN 1 as num');
         $this->assertInstanceOf(BoltStatement::class, $stmt);
@@ -74,7 +74,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
     /**
      * @depends testConstruct
      */
-    public function testExec(PDO $pdo)
+    public function testExec(PDO $pdo): void
     {
         $this->assertTrue($pdo->beginTransaction());
         $result = $pdo->exec('CREATE (:Test { i: 123 })');
@@ -85,7 +85,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
     /**
      * @depends testConstruct
      */
-    public function testQuery(PDO $pdo)
+    public function testQuery(PDO $pdo): void
     {
         $stmt = $pdo->query('RETURN 1 as num', PDO::FETCH_ASSOC);
         $this->assertInstanceOf(BoltStatement::class, $stmt);
@@ -97,7 +97,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
     /**
      * @depends testConstruct
      */
-    public function testAttribute(PDO $pdo)
+    public function testAttribute(PDO $pdo): void
     {
         $pdo->setAttribute(PDO::ATTR_TIMEOUT, 3);
         $this->assertEquals(3, $pdo->getAttribute(PDO::ATTR_TIMEOUT));
@@ -106,7 +106,7 @@ class PDOTest extends \PHPUnit\Framework\TestCase
     /**
      * @depends testConstruct
      */
-    public function testError(PDO $pdo)
+    public function testError(PDO $pdo): void
     {
         //exception
         try {
@@ -137,5 +137,4 @@ class PDOTest extends \PHPUnit\Framework\TestCase
 
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     }
-
 }

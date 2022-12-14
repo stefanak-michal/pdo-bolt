@@ -19,11 +19,11 @@ class Records implements Iterator
     private bool $hasMore = true;
     private array $fetchMode = [PDO::FETCH_BOTH];
     private array $cache = [];
-    private int $key = 0;
+    private int $key = -1;
 
     use ErrorTrait;
 
-    public function __construct(private AProtocol $protocol, private array $columns, private array $boundColumns)
+    public function __construct(private AProtocol $protocol, private array $columns, private array $boundColumns, private int $qid = -1)
     {
     }
 
@@ -54,6 +54,9 @@ class Records implements Iterator
 
     public function next(): void
     {
+        if ($this->hasMore) {
+            $this->pullRecord();
+        }
         $this->key++;
     }
 
@@ -74,12 +77,11 @@ class Records implements Iterator
 
     private function getAs(int $mode, mixed ...$args): mixed
     {
-        if ($mode & PDO::FETCH_ASSOC) {
+        if ($mode === PDO::FETCH_ASSOC) {
             return array_combine($this->columns, $this->cache[$this->key]->getContent());
-        } elseif ($mode & PDO::FETCH_BOTH) {
+        } elseif ($mode === PDO::FETCH_BOTH) {
             return $this->cache[$this->key]->getContent() + array_combine($this->columns, $this->cache[$this->key]->getContent());
-        } elseif ($mode & PDO::FETCH_BOUND) {
-            //todo not tested
+        } elseif ($mode === PDO::FETCH_BOUND) {
             foreach ($this->cache[$this->key]->getContent() as $i => $value) {
                 if (array_key_exists($i + 1, $this->boundColumns)) {
                     $this->boundColumns[$i + 1]['var'] = $value;
@@ -90,22 +92,27 @@ class Records implements Iterator
                     return false;
                 }
             }
-        } elseif ($mode & PDO::FETCH_CLASS) {
-            if ($this->recordAsObject($mode & PDO::FETCH_CLASSTYPE ? reset($this->columns) : ($args[0] ?? null), $args[1] ?? [], $mode & PDO::FETCH_PROPS_LATE)) {
+            return true;
+        } elseif (($mode & PDO::FETCH_CLASS) == PDO::FETCH_CLASS) {
+            if ($this->recordAsObject(
+                ($mode & PDO::FETCH_CLASSTYPE) == PDO::FETCH_CLASSTYPE ? reset($this->columns) : ($args[0] ?? null),
+                $args[1] ?? [],
+                ($mode & PDO::FETCH_PROPS_LATE) == PDO::FETCH_PROPS_LATE)
+            ) {
                 return $this->recordAsObject;
             } else {
                 $this->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
             }
-        } elseif ($mode & PDO::FETCH_INTO) {
+        } elseif ($mode === PDO::FETCH_INTO) {
             if ($this->recordToObject()) {
                 //todo check if should return object or true/false
                 return $this->recordAsObject;
             } else {
                 $this->handleError(Driver::ERR_FETCH_OBJECT, 'Fetch as object unsuccessful.');
             }
-        } elseif ($mode & PDO::FETCH_LAZY) {
+        } elseif ($mode === PDO::FETCH_LAZY) {
             //todo test on other db and do it by that as example
-        } elseif ($mode & PDO::FETCH_NAMED) {
+        } elseif ($mode === PDO::FETCH_NAMED) {
             $output = [];
             foreach ($this->columns as $i => $column) {
                 if (array_key_exists($column, $output)) {
@@ -118,9 +125,9 @@ class Records implements Iterator
                 }
             }
             return $output;
-        } elseif ($mode & PDO::FETCH_NUM) {
+        } elseif ($mode === PDO::FETCH_NUM) {
             return $this->cache[$this->key]->getContent();
-        } elseif ($mode & PDO::FETCH_OBJ) {
+        } elseif ($mode === PDO::FETCH_OBJ) {
             if ($this->recordAsObject()) {
                 return $this->recordAsObject;
             } else {
@@ -134,7 +141,7 @@ class Records implements Iterator
     {
         try {
             if (method_exists($this->protocol, 'pull')) {
-                $this->protocol->pull(['n' => 1]); //todo add qid
+                $this->protocol->pull(['n' => 1, 'qid' => $this->qid]);
             } elseif (method_exists($this->protocol, 'pullAll')) {
                 $this->protocol->pullAll();
             } else {
@@ -182,8 +189,16 @@ class Records implements Iterator
             }
 
             $arr = array_combine($this->columns, $this->cache[$this->key]->getContent());
-            foreach ($ref->getProperties() as $property) {
-                $property->setValue($instance, $arr[$property->getName()]);
+            if (count($ref->getProperties()) > 0) {
+                foreach ($ref->getProperties() as $property) {
+                    if (array_key_exists($property->getName(), $arr)) {
+                        $property->setValue($instance, $arr[$property->getName()]);
+                    }
+                }
+            } else {
+                foreach ($arr as $key => $value) {
+                    $instance->{$key} = $value;
+                }
             }
 
             if (!$late) {

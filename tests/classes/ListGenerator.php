@@ -1,6 +1,6 @@
 <?php
 
-namespace pdo_bolt\tests\generators;
+namespace pdo_bolt\tests\classes;
 
 /**
  * Class ListGenerator
