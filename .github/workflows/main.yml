@@ -36,7 +36,10 @@ jobs:
           php-version: ${{ matrix.php-version }}
           extensions: mbstring, sockets, pdo
           coverage: xdebug
-          ini-values: max_execution_time=0,pdo.dsn.mybolt=bolt:host=localhost;port=7687;appname=pdo-bolt
+          ini-values: max_execution_time=0
+
+      - name: Set custom php.ini settings
+        run: echo 'pdo.dsn.mybolt=bolt:host=localhost;port=7687;appname=pdo-bolt' >> /etc/php/8.1/cli/conf.d/99-pecl.ini
 
       - name: Install dependencies
         run: composer install --no-progress
