@@ -179,6 +179,7 @@ class Records implements Iterator
             $arr = array_combine($this->columns, $this->cache[$this->key]->getContent());
             foreach ($ref->getProperties() as $property) {
                 if (array_key_exists($property->getName(), $arr)) {
+                    $property->setAccessible(true);
                     $property->setValue($instance, $arr[$property->getName()]);
                     unset($arr[$property->getName()]);
                 }

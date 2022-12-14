@@ -25,15 +25,15 @@ class Statement extends PDOStatement
 
     public function __construct(private Driver $driver, string $query)
     {
-        $ref = new \ReflectionClass($this);
-        $prop = $ref->getProperty('queryString');
-        $prop->setValue($this, $query);
-        $this->parseQueryString();
+        if (version_compare(phpversion(), '8.1', '>=')) {
+            $this->queryString = $query;
+        }
+        $this->parseQueryString($query);
     }
 
-    private function parseQueryString(): void
+    private function parseQueryString(string $query): void
     {
-        preg_match_all('/\$[a-z][a-z0-9]*|\?{1,2}/i', $this->queryString, $matches, PREG_OFFSET_CAPTURE);
+        preg_match_all('/\$[a-z][a-z0-9]*|\?{1,2}/i', $query, $matches, PREG_OFFSET_CAPTURE);
         $this->placeholdersCnt = count($matches[0]);
         if ($this->placeholdersCnt) {
             $n = array_count_values(array_map(function (string $item) {
@@ -45,7 +45,7 @@ class Statement extends PDOStatement
             }
         }
 
-        $withoutParams = preg_split('/\$[a-z][a-z0-9]*|\?{1,2}/i', $this->queryString);
+        $withoutParams = preg_split('/\$[a-z][a-z0-9]*|\?{1,2}/i', $query);
 
         $parts = [];
         $index = 1;
