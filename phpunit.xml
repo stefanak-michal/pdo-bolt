@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" colors="true" xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd">
+    <testsuites>
+        <testsuite name="PDO">
+            <file>./tests/PDOTest.php</file>
+            <file>./tests/PDOStatementTest.php</file>
+            <file>./tests/FetchModeTest.php</file>
+        </testsuite>
+        <testsuite name="Neo4j">
+            <file>./tests/ParamTypeTest.php</file>
+            <file>./tests/DSNTest.php</file>
+        </testsuite>
+    </testsuites>
+</phpunit>
