@@ -35,10 +35,11 @@ class DSNTest extends \PHPUnit\Framework\TestCase
 
     public function testAliasDsn(): void
     {
+        $this->markTestSkipped('https://github.com/shivammathur/setup-php/issues/676');
         $pdo = new PDO(
             'mybolt',
-            $GLOBALS['NEO_USER'] ?? 'neo4j',
-            $GLOBALS['NEO_PASS'] ?? 'neo4j',
+            getenv('GDB_USERNAME'),
+            getenv('GDB_PASSWORD'),
             ['protocol_versions' => [5]]
         );
         $this->assertInstanceOf(PDO::class, $pdo);

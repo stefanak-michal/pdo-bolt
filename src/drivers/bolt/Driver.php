@@ -121,7 +121,7 @@ class Driver implements IDriver
                 $this->handleError(self::ERR_AUTH_LOGIN, $response->getContent(), errorMode: PDO::ERRMODE_EXCEPTION);
             }
 
-            $this->attributes[PDO::ATTR_SERVER_INFO] = $response->getContent()['server'];
+            $this->attributes[PDO::ATTR_SERVER_INFO] = $response->getContent()['server'] ?? '';
             $this->attributes[PDO::ATTR_CLIENT_VERSION] = $this->protocol->getVersion();
 
             if (array_key_exists('dbname', $dsnArray)) {

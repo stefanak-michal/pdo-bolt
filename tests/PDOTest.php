@@ -13,17 +13,17 @@ use PDOException;
  */
 class PDOTest extends \PHPUnit\Framework\TestCase
 {
-    //todo github action with yii framework ?
-
     public function testConstruct(): PDO
     {
         $this->assertContains('bolt', PDO::getAvailableDrivers());
 
         $pdo = new PDO(
-            'bolt:host=' . ($GLOBALS['NEO_HOST'] ?? '127.0.0.1') . ';port=' . ($GLOBALS['NEO_PORT'] ?? 7687) . ';appname=pdo-bolt',
-            $GLOBALS['NEO_USER'] ?? 'neo4j',
-            $GLOBALS['NEO_PASS'] ?? 'neo4j',
-            ['protocol_versions' => [5]]
+            'bolt:host=' . (getenv('GDB_HOST') ? getenv('GDB_HOST') : '127.0.0.1')
+            . ';port=' . (getenv('GDB_PORT') ? getenv('GDB_PORT') : 7687)
+            . ';appname=pdo-bolt',
+            getenv('GDB_USERNAME'),
+            getenv('GDB_PASSWORD'),
+            ['protocol_versions' => [getenv('BOLT_VERSION')]]
         );
         $this->assertInstanceOf(PDO::class, $pdo);
         return $pdo;

@@ -95,13 +95,16 @@ Automatically converts resource or string into instance of Bytes class.
 
 ## Additional bolt parameter types
 
-| Constant                   | Description                                                                                                                       |
-|----------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| PDO::BOLT_PARAM_FLOAT      |                                                                                                                                   |
-| PDO::BOLT_PARAM_LIST       | Array witch consecutive numeric keys from 0.                                                                                      | 
-| PDO::BOLT_PARAM_DICTIONARY | Object or array which is not list.                                                                                                |
-| PDO::BOLT_PARAM_STRUCTURE  | Class extending IStructure ([available structures](https://neo4j.com/docs/cypher-manual/current/syntax/values/#structural-types)) |
-| PDO::BOLT_PARAM_BYTES      | instance of Bytes class                                                                                                           |
+| Constant                   | Description                                  |
+|----------------------------|----------------------------------------------|
+| PDO::BOLT_PARAM_FLOAT      |                                              |
+| PDO::BOLT_PARAM_LIST       | Array witch consecutive numeric keys from 0. | 
+| PDO::BOLT_PARAM_DICTIONARY | Object or array which is not list.           |
+| PDO::BOLT_PARAM_STRUCTURE  | Class extending IStructure.                  |
+| PDO::BOLT_PARAM_BYTES      | instance of Bytes class.                     |
+
+_List of usable parameters depends on graph database you
+use ([Neo4j](https://neo4j.com/docs/cypher-manual/current/syntax/values/#structural-types), [Memgraph](https://memgraph.com/docs/memgraph/reference-guide/data-types))._
 
 ## Not supported PDO features with Bolt
 

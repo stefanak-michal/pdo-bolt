@@ -17,10 +17,12 @@ class FetchModeTest extends \PHPUnit\Framework\TestCase
     {
         parent::setUpBeforeClass();
         self::$pdo = new \pdo_bolt\PDO(
-            'bolt:host=' . ($GLOBALS['NEO_HOST'] ?? '127.0.0.1') . ';port=' . ($GLOBALS['NEO_PORT'] ?? 7687) . ';appname=pdo-bolt',
-            $GLOBALS['NEO_USER'] ?? 'neo4j',
-            $GLOBALS['NEO_PASS'] ?? 'neo4j',
-            ['protocol_versions' => [5]]
+            'bolt:host=' . (getenv('GDB_HOST') ? getenv('GDB_HOST') : '127.0.0.1')
+            . ';port=' . (getenv('GDB_PORT') ? getenv('GDB_PORT') : 7687)
+            . ';appname=pdo-bolt',
+            getenv('GDB_USERNAME'),
+            getenv('GDB_PASSWORD'),
+            ['protocol_versions' => [getenv('BOLT_VERSION')]]
         );
         self::assertInstanceOf(\pdo_bolt\PDO::class, self::$pdo);
     }
