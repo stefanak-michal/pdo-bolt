@@ -19,7 +19,7 @@ jobs:
       neo4j:
         image: neo4j:5
         env:
-          NEO4J_AUTH: neo4j/nothing
+          NEO4J_AUTH: neo4j/nothing123
         ports:
           - 7687:7687
           - 7474:7474
@@ -44,6 +44,6 @@ jobs:
       - name: Test with phpunit
         env:
           GDB_USERNAME: neo4j
-          GDB_PASSWORD: nothing
+          GDB_PASSWORD: nothing123
           BOLT_VERSION: 5
         run: vendor/bin/phpunit --configuration phpunit.xml --testsuite PDO,Neo4j
