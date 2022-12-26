@@ -35,7 +35,6 @@ class DSNTest extends \PHPUnit\Framework\TestCase
 
     public function testAliasDsn(): void
     {
-        $this->markTestSkipped('https://github.com/shivammathur/setup-php/issues/676');
         $pdo = new PDO(
             'mybolt',
             getenv('GDB_USERNAME'),
