@@ -76,6 +76,12 @@ at [php.net](https://www.php.net/manual/en/book.pdo.php).
 
 _Check method annotation for more informations._
 
+### Yii framework
+
+You can use this library with Yii framework in very simple way. Just set up in configuration your PDO class.
+
+https://www.yiiframework.com/doc/api/2.0/yii-db-connection#$pdoClass-detail
+
 ## Bolt specific features
 
 ### Parameter placeholders
