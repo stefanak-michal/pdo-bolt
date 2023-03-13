@@ -106,7 +106,14 @@ class Driver implements IDriver
         try {
             $this->protocol = $bolt->build();
 
-            if (method_exists($this->protocol, 'hello')) {
+            if (method_exists($this->protocol, 'logon')) {
+                $response = $this->protocol->hello();
+                if ($response->getSignature() === $response::SIGNATURE_FAILURE) {
+                    $this->handleError(self::ERR_AUTH_LOGIN, $response->getContent(), errorMode: PDO::ERRMODE_EXCEPTION);
+                }
+                unset($auth['user_agent']);
+                $response = $this->protocol->logon($auth);
+            } elseif (method_exists($this->protocol, 'hello')) {
                 $response = $this->protocol->hello($auth);
             } elseif (method_exists($this->protocol, 'init')) {
                 $userAgent = $auth['user_agent'];
@@ -353,7 +360,7 @@ class Driver implements IDriver
                 $errorMode = $this->getAttribute(PDO::ATTR_ERRMODE);
             }
 
-            $message= 'CQLSTATE[' . $errorCode . '] ' . ($this->failureContent['message'] ?? '');
+            $message = 'CQLSTATE[' . $errorCode . '] ' . ($this->failureContent['message'] ?? '');
             if (!empty($this->failureContent['code'])) {
                 $message .= ' (' . $this->failureContent['code'] . ')';
             }
